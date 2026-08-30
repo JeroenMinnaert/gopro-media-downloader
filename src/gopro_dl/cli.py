@@ -111,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     setup = sub.add_parser(
         "setup",
         help="wizard: log into GoPro in a browser window (or paste a token), "
-        "pick a destination, write .env",
+        "pick a destination, save settings",
     )
     common(setup, needs_manifest=False)
     setup.add_argument(
@@ -232,7 +232,7 @@ def _detect_timezone() -> str | None:
 
 
 def cmd_setup(config: Config, args) -> int:
-    """First-run wizard: get/validate a token, pick a destination, write .env."""
+    """First-run wizard: get/validate a token, pick a destination, save settings."""
     console.print("[bold]gopro-dl setup[/bold] - token, destination and settings in one pass.\n")
 
     token, source, account = config.token, ("--token" if config.token else None), None
