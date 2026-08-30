@@ -22,13 +22,11 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import platformdirs
-
-_ENVRC_ASSIGNMENT = re.compile(r"^\s*(?:export\s+)?GOPRO_DL_HOME=(.+?)\s*$")
+from dotenv import dotenv_values
 
 
 def _read_envrc_home(start: Path) -> str | None:
@@ -36,31 +34,27 @@ def _read_envrc_home(start: Path) -> str | None:
     `start` -- for when direnv isn't installed/hooked into the shell, so
     that file still does something on its own.
 
-    This is NOT shell evaluation (that's direnv's job): just a plain-text
-    match for a `[export ]GOPRO_DL_HOME=...` line, skipping anything
-    commented out, with a literal `$PWD`/`${PWD}` expanded to the .envrc's
-    own directory (what direnv itself would set it to). Anything fancier in
-    a real `.envrc` (conditionals, other expansions) isn't understood --
-    stops at the first `.envrc` found either way, matching or not, since
-    that's the one that actually applies to `start`.
+    This is NOT shell evaluation (that's direnv's job): just the same
+    `export KEY=value`/comment/quote parsing gopro-dl already uses for its
+    own config file (`dotenv_values`, with interpolation off so a literal
+    `$PWD`/`${PWD}` isn't resolved against the process's own env), expanded
+    by hand to the .envrc's own directory (what direnv itself would set it
+    to). Anything fancier in a real `.envrc` (conditionals, other
+    expansions) isn't understood -- stops at the first `.envrc` found
+    either way, matching or not, since that's the one that actually
+    applies to `start`.
     """
     for candidate in (start, *start.parents):
         envrc = candidate / ".envrc"
         if not envrc.is_file():
             continue
         try:
-            lines = envrc.read_text(encoding="utf-8").splitlines()
+            value = dotenv_values(envrc, interpolate=False).get("GOPRO_DL_HOME")
         except OSError:
             return None
-        for line in lines:
-            if line.lstrip().startswith("#"):
-                continue
-            match = _ENVRC_ASSIGNMENT.match(line)
-            if not match:
-                continue
-            value = match.group(1).strip().strip("'\"")
-            return value.replace("${PWD}", str(candidate)).replace("$PWD", str(candidate))
-        return None
+        if value is None:
+            return None
+        return value.replace("${PWD}", str(candidate)).replace("$PWD", str(candidate))
     return None
 
 
