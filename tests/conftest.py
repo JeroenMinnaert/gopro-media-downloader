@@ -37,6 +37,7 @@ def isolate_environment(monkeypatch, tmp_path):
     monkeypatch.setattr("gopro_dl.config.load_dotenv", lambda *a, **k: None)
     monkeypatch.setattr("gopro_dl.config.default_dest", lambda: tmp_path / "unset-default-dest")
     monkeypatch.setattr("gopro_dl.config.DEFAULT_TOKEN_FILE", tmp_path / "unset-default-token")
+    monkeypatch.setattr("gopro_dl.cli.DEFAULT_ENV_FILE", tmp_path / "unset-config.env")
 
 
 @pytest.fixture(autouse=True)

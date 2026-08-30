@@ -10,6 +10,11 @@ from gopro_dl.api import API_HOST
 from gopro_dl.cli import _detect_timezone, main
 
 
+def _env_path(tmp_path):
+    """Matches conftest.py's isolate_environment redirect of DEFAULT_ENV_FILE."""
+    return tmp_path / "unset-config.env"
+
+
 def _run_setup(tmp_path, *extra_args, token_file=None, dest=None, with_timezone=True, with_dest=True):
     args = ["setup", "--token-file", str(token_file if token_file is not None else tmp_path / "tok")]
     if with_dest:
@@ -40,7 +45,7 @@ def test_uses_a_cached_browser_session_without_prompting(tmp_path, monkeypatch):
     assert code == 0
     assert (tmp_path / "tok").read_text().strip() == "cached-token"
     assert oct((tmp_path / "tok").stat().st_mode)[-3:] == "600"
-    env = (tmp_path / ".env").read_text()
+    env = _env_path(tmp_path).read_text()
     assert "GOPRO_TOKEN_FILE=" in env
     assert "GOPRO_DEST=" in env
 
@@ -124,7 +129,7 @@ def test_does_not_overwrite_an_existing_token_file_without_confirmation(tmp_path
 def test_force_overwrites_existing_token_file_and_env(tmp_path, monkeypatch):
     token_file = tmp_path / "tok"
     token_file.write_text("original-token")
-    (tmp_path / ".env").write_text("STALE=1\n")
+    _env_path(tmp_path).write_text("STALE=1\n")
     monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
     monkeypatch.chdir(tmp_path)
     with respx.mock:
@@ -132,7 +137,7 @@ def test_force_overwrites_existing_token_file_and_env(tmp_path, monkeypatch):
         code = _run_setup(tmp_path, "--force", token_file=token_file)
     assert code == 0
     assert token_file.read_text().strip() == "cached-token"
-    assert "STALE" not in (tmp_path / ".env").read_text()
+    assert "STALE" not in _env_path(tmp_path).read_text()
 
 
 def test_cancelling_the_manual_paste_prompt_aborts_cleanly(tmp_path, monkeypatch):
@@ -160,14 +165,14 @@ def test_an_empty_manual_paste_is_rejected(tmp_path, monkeypatch):
 
 
 def test_leaves_an_existing_env_file_untouched_without_force(tmp_path, monkeypatch):
-    (tmp_path / ".env").write_text("EXISTING=1\n")
+    _env_path(tmp_path).write_text("EXISTING=1\n")
     monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
     monkeypatch.chdir(tmp_path)
     with respx.mock:
         _validate_ok()
         code = _run_setup(tmp_path)
     assert code == 0
-    assert (tmp_path / ".env").read_text() == "EXISTING=1\n"
+    assert _env_path(tmp_path).read_text() == "EXISTING=1\n"
 
 
 def test_cancelling_the_overwrite_prompt_leaves_the_token_file_untouched(tmp_path, monkeypatch):
@@ -200,7 +205,7 @@ def test_detected_timezone_is_used_without_prompting(tmp_path, monkeypatch):
         _validate_ok()
         code = _run_setup(tmp_path, with_timezone=False)
     assert code == 0
-    assert "GOPRO_TIMEZONE=Europe/Brussels" in (tmp_path / ".env").read_text()
+    assert "GOPRO_TIMEZONE=Europe/Brussels" in _env_path(tmp_path).read_text()
 
 
 def test_falls_back_to_the_prompt_when_detection_fails(tmp_path, monkeypatch):
@@ -212,7 +217,7 @@ def test_falls_back_to_the_prompt_when_detection_fails(tmp_path, monkeypatch):
         _validate_ok()
         code = _run_setup(tmp_path, with_timezone=False)
     assert code == 0
-    assert "GOPRO_TIMEZONE=Europe/Paris" in (tmp_path / ".env").read_text()
+    assert "GOPRO_TIMEZONE=Europe/Paris" in _env_path(tmp_path).read_text()
 
 
 def test_cancelling_the_timezone_prompt_just_skips_it(tmp_path, monkeypatch):
@@ -228,7 +233,7 @@ def test_cancelling_the_timezone_prompt_just_skips_it(tmp_path, monkeypatch):
         _validate_ok()
         code = _run_setup(tmp_path, with_timezone=False)
     assert code == 0
-    assert "GOPRO_TIMEZONE" not in (tmp_path / ".env").read_text()
+    assert "GOPRO_TIMEZONE" not in _env_path(tmp_path).read_text()
 
 
 def test_an_invalid_typed_timezone_is_ignored_with_a_warning(tmp_path, monkeypatch):
@@ -240,7 +245,7 @@ def test_an_invalid_typed_timezone_is_ignored_with_a_warning(tmp_path, monkeypat
         _validate_ok()
         code = _run_setup(tmp_path, with_timezone=False)
     assert code == 0
-    assert "GOPRO_TIMEZONE" not in (tmp_path / ".env").read_text()
+    assert "GOPRO_TIMEZONE" not in _env_path(tmp_path).read_text()
 
 
 def test_rejects_an_unvalidatable_token_without_writing_anything(tmp_path, monkeypatch):
@@ -253,7 +258,7 @@ def test_rejects_an_unvalidatable_token_without_writing_anything(tmp_path, monke
         code = _run_setup(tmp_path)
     assert code == 1
     assert not (tmp_path / "tok").exists()
-    assert not (tmp_path / ".env").exists()
+    assert not _env_path(tmp_path).exists()
 
 
 # -- cli._detect_timezone ----------------------------------------------------
@@ -314,7 +319,7 @@ def test_prompts_for_a_destination_when_not_passed_via_flag(tmp_path, monkeypatc
         code = _run_setup(tmp_path, with_dest=False)
     assert code == 0
     assert custom_dest.is_dir()
-    assert f"GOPRO_DEST={custom_dest}" in (tmp_path / ".env").read_text()
+    assert f"GOPRO_DEST={custom_dest}" in _env_path(tmp_path).read_text()
 
 
 def test_pressing_enter_accepts_the_default_destination(tmp_path, monkeypatch):
@@ -330,4 +335,4 @@ def test_pressing_enter_accepts_the_default_destination(tmp_path, monkeypatch):
         code = _run_setup(tmp_path, with_dest=False)
     assert code == 0
     assert fake_default.is_dir()
-    assert f"GOPRO_DEST={fake_default}" in (tmp_path / ".env").read_text()
+    assert f"GOPRO_DEST={fake_default}" in _env_path(tmp_path).read_text()

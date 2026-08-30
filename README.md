@@ -47,7 +47,7 @@ credentials. Underneath, it uses a bearer token (the `gp_access_token`
 session cookie) that expires after a while; the tool handles that mid-run
 without losing progress (see below).
 
-The setup wizard gets you a token, validates it, and writes a starter `.env` —
+The setup wizard gets you a token, validates it, and saves your settings —
 just run it, nothing to install by hand first:
 
 ```bash
@@ -55,7 +55,7 @@ gopro-dl setup
 ```
 
 ```
-gopro-dl setup - token, destination and .env in one pass.
+gopro-dl setup - token, destination and settings in one pass.
 
 Checking for a saved GoPro browser session...
 Downloading the browser used for GoPro login (one-time, ~250MB)...
@@ -67,7 +67,7 @@ Wrote /Users/jane/Library/Application Support/gopro-dl/token (chmod 600)
 Destination for media (Enter to accept /Users/jane/Downloads/GoPro): 
 Destination: /Users/jane/Downloads/GoPro
 Detected timezone: Europe/Brussels (override with --timezone if wrong)
-Wrote /Users/jane/.env
+Wrote /Users/jane/Library/Application Support/gopro-dl/config.env
 
 Next: gopro-dl sync --dry-run --limit 5
 ```
@@ -103,7 +103,7 @@ wizard only falls back to asking if that can't be read. Pass `--timezone`
 yourself to skip or override detection.
 
 It refuses to write anything until the token validates against the API, and
-never silently overwrites an existing token file or `.env` — it asks first
+never silently overwrites an existing token file or config — it asks first
 (or pass `--force`). Pass `--no-browser` to skip straight to pasting a token by
 hand, or `--token`/`--token-file`/`--dest`/`--timezone` to skip their prompts
 for a scripted run:
@@ -132,13 +132,13 @@ gopro-dl token
 ```
 
 With no `--token-file`/`GOPRO_TOKEN_FILE` set, this reads from the same
-per-OS default location `setup` wrote to — so it works from any directory,
-not just the one with the `.env` `setup` created.
+per-OS default location `setup` wrote to — so it works from any directory.
 
 ## Usage
 
-Put your settings in `.env` (copy `.env.example`) and every command becomes a
-one-liner. Otherwise pass `--dest`, `--token-file` and `--timezone` explicitly.
+Once `gopro-dl setup` has run, every command below is a one-liner from any
+directory — settings are saved for you. Otherwise pass `--dest`,
+`--token-file` and `--timezone` explicitly (see `.env.example` for every key).
 
 ```bash
 # Plan only -- builds the full manifest, downloads nothing
@@ -176,8 +176,9 @@ Useful flags: `--timezone Europe/Brussels`, `--since 2022-01-01`,
 `--concurrency 3` (max 8), `--limit N`, `--retry-failed`, `--quiet`,
 `--non-interactive`, `--no-manifest-refresh`.
 
-Settings can also live in `.env` (copy `.env.example`). Precedence is
-flag → environment → `.env` → default.
+Settings written by `gopro-dl setup` live in one config file (`.env.example`
+lists every key), the same for every directory. Precedence is
+flag → environment variable → that config file → built-in default.
 
 ## When the token expires mid-run
 
@@ -348,7 +349,8 @@ SMB volume over 4 TiB under-reports its free space by exactly 2**32 blocks
 through `shutil.disk_usage`. The pre-flight check reads `df` instead, so a large
 share is measured correctly rather than wrongly refused.
 
-Put these settings in `.env` so you can just run `gopro-dl sync`.
+Run `gopro-dl setup --dest /Volumes/GoPro --token-file ~/gopro-backup/token`
+once to save these, then just run `gopro-dl sync`.
 
 If you would rather stage locally and copy afterwards:
 

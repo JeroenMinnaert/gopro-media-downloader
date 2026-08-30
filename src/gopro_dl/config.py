@@ -1,4 +1,4 @@
-"""Configuration: CLI flag > env var > .env > default."""
+"""Configuration: CLI flag > env var > config file > default."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .appdirs import DEFAULT_TOKEN_FILE, default_dest, manifest_dir_for
+from .appdirs import DEFAULT_ENV_FILE, DEFAULT_TOKEN_FILE, default_dest, manifest_dir_for
 from .models import DEFAULT_TYPES
 from .paths import parse_timezone
 from .preflight import is_network_filesystem
@@ -54,8 +54,14 @@ def _expand(value: str | None) -> Path | None:
 
 
 def load_config(args) -> Config:
-    """Build a Config from parsed CLI args, environment and .env."""
-    load_dotenv(override=False)
+    """Build a Config from parsed CLI args, environment and the config file.
+
+    The config file lives next to the token, at DEFAULT_ENV_FILE -- one
+    fixed location regardless of which directory gopro-dl is run from,
+    rather than a `.env` that only applies from the directory it was
+    written in.
+    """
+    load_dotenv(DEFAULT_ENV_FILE, override=False)
 
     dest = _expand(getattr(args, "dest", None) or _env("GOPRO_DEST")) or default_dest()
     token_file = (

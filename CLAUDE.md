@@ -30,6 +30,15 @@ python3 -m venv .venv
 .venv/bin/gopro-dl sync --dry-run --limit 5
 ```
 
+This editable install auto-detects that it's running from a source checkout
+(`appdirs.py: _source_checkout_root()`) and keeps the token, config file,
+browser-login profile, manifests, and default destination inside
+`<repo>/.dev-state/` (gitignored) instead of your real `~/Library/Application
+Support`/`~/Downloads` -- nothing to set by hand. Only ever true for an
+editable install; a real `pipx`/`pip` install of the built package always
+resolves into site-packages instead, so end users are unaffected. Override
+the location explicitly with `GOPRO_DL_HOME=/some/path` if you ever need to.
+
 Tests are fully mocked (respx for HTTP) — no network access or real GoPro
 token needed to run the suite. Fixtures live in `tests/fixtures/`.
 
@@ -37,7 +46,7 @@ CI (`.github/workflows/ci.yml`) runs ruff, then pytest across Python
 3.11/3.12/3.13 on **both** ubuntu-latest and macos-latest — macOS is not
 incidental, see Architecture below. It also smoke-tests the packaged entry
 point from outside the source tree and checks that a clean environment (no
-`GOPRO_*` vars, no `.env`) yields no usable token.
+`GOPRO_*` vars, no config file) yields no usable token.
 
 ## Architecture
 

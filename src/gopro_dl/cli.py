@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .api import AuthExpired, GoProClient
+from .appdirs import DEFAULT_ENV_FILE
 from .auth import AuthGate, TokenError, TokenProvider, token_instructions
 from .backfill import backfill_etags
 from .browser_login import fetch_cached as fetch_cached_browser_token
@@ -232,7 +233,7 @@ def _detect_timezone() -> str | None:
 
 def cmd_setup(config: Config, args) -> int:
     """First-run wizard: get/validate a token, pick a destination, write .env."""
-    console.print("[bold]gopro-dl setup[/bold] - token, destination and .env in one pass.\n")
+    console.print("[bold]gopro-dl setup[/bold] - token, destination and settings in one pass.\n")
 
     token, source, account = config.token, ("--token" if config.token else None), None
 
@@ -309,7 +310,7 @@ def cmd_setup(config: Config, args) -> int:
             console.print(f"[yellow]Ignoring timezone {tz_name!r}: {exc}[/yellow]")
             tz_name = ""
 
-    env_path = Path(".env")
+    env_path = DEFAULT_ENV_FILE
     if env_path.exists() and not args.force:
         console.print(
             f"\n[dim]{env_path} already exists - leaving it as is. Make sure it has:\n"
@@ -320,14 +321,15 @@ def cmd_setup(config: Config, args) -> int:
         )
     else:
         lines = [
-            "# Written by `gopro-dl setup`. See .env.example for every option.\n",
+            "# Written by `gopro-dl setup`. Same settings for every directory.\n",
             f"GOPRO_TOKEN_FILE={token_file}\n",
             f"GOPRO_DEST={dest}\n",
         ]
         if tz_name:
             lines.append(f"GOPRO_TIMEZONE={tz_name}\n")
+        env_path.parent.mkdir(parents=True, exist_ok=True)
         env_path.write_text("".join(lines), encoding="utf-8")
-        console.print(f"[green]Wrote[/green] {env_path.resolve()}")
+        console.print(f"[green]Wrote[/green] {env_path}")
 
     console.print("\n[bold]Next:[/bold] gopro-dl sync --dry-run --limit 5")
     return 0

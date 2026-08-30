@@ -64,10 +64,14 @@ jobs:
           gopro-dl backfill-etags --help
 
       - name: No token can be resolved from a clean environment
-        # Guards the config precedence: without GOPRO_* or a .env the tool must
-        # refuse rather than silently reach for something unexpected.
+        # Guards the config precedence: without GOPRO_* or a config file the
+        # tool must refuse rather than silently reach for something
+        # unexpected. GOPRO_DL_HOME is forced too: this editable install
+        # would otherwise auto-detect the checkout as a dev sandbox (see
+        # appdirs.py), which resolves from __file__, not HOME -- pinning it
+        # keeps this check deterministic regardless of that detection.
         run: |
           cd "$(mktemp -d)"
-          if HOME="$(mktemp -d)" gopro-dl token; then
+          if HOME="$(mktemp -d)" GOPRO_DL_HOME="$(mktemp -d)" gopro-dl token; then
             echo "expected a clean environment to have no usable token"; exit 1
           fi
