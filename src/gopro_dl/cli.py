@@ -20,6 +20,7 @@ from .browser_login import fetch_cached as fetch_cached_browser_token
 from .browser_login import login as login_via_browser
 from .circuit import CircuitBreaker
 from .config import Config, apply_network_manifest_redirect, load_config
+from .fixdates import DEFAULT_TOLERANCE, fix_dates
 from .locations import AppDirs
 from .logging_setup import log_event, setup_logging
 from .manifest import Manifest
@@ -104,6 +105,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     common(backfill)
     backfill.add_argument("--limit", type=int, help="only process N files")
+
+    fix = sub.add_parser(
+        "fix-dates",
+        help="repair the capture dates embedded in downloaded photos and videos",
+    )
+    common(fix)
+    fix.add_argument("--dry-run", action="store_true", help="report what would change only")
+    fix.add_argument("--limit", type=int, help="only process N files")
+    fix.add_argument("--since", help="only captures on/after this date (YYYY-MM-DD)")
+    fix.add_argument("--until", help="only captures on/before this date (YYYY-MM-DD)")
+    fix.add_argument(
+        "--tolerance",
+        type=int,
+        default=DEFAULT_TOLERANCE,
+        help=f"seconds of drift to accept before rewriting (default {DEFAULT_TOLERANCE})",
+    )
+    fix.add_argument(
+        "--video-utc",
+        action="store_true",
+        help="also normalise video timestamps that hold capture-local time, "
+        "which many cameras write in the field the spec calls UTC",
+    )
+    fix.add_argument(
+        "--flatten-to-api",
+        action="store_true",
+        help="write GoPro's timestamp verbatim instead of sliding a folder whose "
+        "camera clock was reset, which preserves the clips' relative times",
+    )
+    fix.add_argument(
+        "--keep-mtime",
+        action="store_true",
+        help="leave file modification times alone (they default to the capture time)",
+    )
 
     token = sub.add_parser("token", help="validate the current token")
     common(token, needs_manifest=False)
@@ -609,6 +643,56 @@ def cmd_backfill(config: Config, args) -> int:
     return 1 if (report.failed or report.size_mismatches) else 0
 
 
+def cmd_fix_dates(config: Config, args) -> int:
+    with open_manifest(config) as manifest:
+        report = fix_dates(
+            manifest,
+            config.dest,
+            fallback_timezone=config.fallback_timezone,
+            tolerance=args.tolerance,
+            since=args.since,
+            until=args.until,
+            limit=args.limit,
+            dry_run=args.dry_run,
+            video_utc=args.video_utc,
+            set_mtime=not args.keep_mtime,
+            preserve_spacing=not args.flatten_to_api,
+            on_progress=lambda path, was, now: console.print(
+                f"  [dim]{was}[/dim] -> [green]{now}[/green]  {path}"
+            ),
+        )
+
+    verb = "would repair" if args.dry_run else "repaired"
+    console.print(
+        f"\nChecked {report.checked} file(s): [green]{len(report.fixed)} {verb}[/green], "
+        f"{report.already_ok} already correct."
+    )
+    if report.added_tags:
+        console.print(
+            f"  {report.added_tags} photo(s) had no Exif date at all and "
+            f"{'would get' if args.dry_run else 'now carry'} one."
+        )
+    if report.shifted:
+        console.print(
+            f"  {report.shifted} clip(s) had a reset camera clock; their folder is "
+            "slid as a whole so the clips keep their order and spacing."
+        )
+    if report.mtime_only:
+        console.print(f"  {report.mtime_only} file(s) needed only their modification time set.")
+    for path, reason in report.skipped[:20]:
+        console.print(f"  [yellow]skipped[/yellow] {path}: {reason}")
+    if len(report.skipped) > 20:
+        console.print(f"  [yellow]...and {len(report.skipped) - 20} more skipped[/yellow]")
+    for path, error in report.failed:
+        console.print(f"  [red]failed[/red] {path}: {error}")
+    if report.fixed and not args.dry_run:
+        console.print(
+            "Repaired files no longer match the origin byte-for-byte by design; "
+            "their checksums now describe the local copy."
+        )
+    return 1 if report.problems else 0
+
+
 def cmd_retry(config: Config) -> int:
     with open_manifest(config) as manifest:
         items, files = manifest.reset_failed()
@@ -658,6 +742,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_retry(config)
         if args.command == "backfill-etags":
             return cmd_backfill(config, args)
+        if args.command == "fix-dates":
+            return cmd_fix_dates(config, args)
     except TokenError as exc:
         console.print(f"[red]{exc}[/red]")
         return 1

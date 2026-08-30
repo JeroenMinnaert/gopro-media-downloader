@@ -164,6 +164,8 @@ gopro-dl verify                 # re-check sizes of everything marked done
 gopro-dl verify --deep          # re-hash and compare against the origin ETag
 gopro-dl verify --deep --fix    # ... and re-queue anything that fails
 gopro-dl backfill-etags         # fetch checksums for files downloaded earlier
+gopro-dl fix-dates --dry-run    # what capture dates are wrong or missing?
+gopro-dl fix-dates              # ... repair them in the files themselves
 gopro-dl retry                  # reset failed files, then sync again
 gopro-dl token                  # is the current token still valid?
 ```
@@ -304,6 +306,87 @@ gopro-dl verify --deep         # re-read from disk and check against the origin
 transfers no media, so it is cheap to run. `verify --deep` re-reads everything,
 which is bounded by your link (roughly 4 hours for 1.4 TiB over gigabit) — run
 it once at the end, not during a download, or the two compete for bandwidth.
+
+## Capture dates inside the files
+
+The `YYYY-MM-DD/` folders always come from GoPro's `captured_at`, but the date
+stored *inside* a downloaded file often does not match it — and that is the
+date Photos, Lightroom and every NAS photo app actually sort by.
+
+Two different things go wrong, and `fix-dates` handles both:
+
+* **Photos usually have no capture date at all.** GoPro serves plenty of JPEGs
+  whose Exif block contains nothing but orientation and pixel dimensions — no
+  `DateTimeOriginal`. With no date to read, apps fall back to the file's
+  modification time, which for a downloaded file is *when you downloaded it*,
+  so a 2015 clip shows up as today. `fix-dates` adds the tag.
+* **Videos are usually fine**, but a wrong `mvhd`/`tkhd`/`mdhd` creation time
+  is corrected in place, without rewriting the container.
+
+```bash
+gopro-dl fix-dates --dry-run          # report only, changes nothing
+gopro-dl fix-dates --since 2024-01-01 # bound it to a date range
+gopro-dl fix-dates                    # repair
+```
+
+It reads the manifest and the files on disk only — no API calls, no media
+transferred. Pass the same `--timezone` your sync used (or let the saved config
+supply it), or photos GoPro gives no timezone for will get an Exif time that
+disagrees with the folder they sit in.
+
+What it writes:
+
+| Where | Value | Why |
+| --- | --- | --- |
+| Exif `DateTimeOriginal`, `DateTimeDigitized`, `DateTime` | capture-**local** wall time | Exif dates carry no zone; this is the same conversion that names the folder |
+| Exif `GPSDateStamp` / `GPSTimeStamp` | UTC | the spec defines these as UTC |
+| `mvhd` / `tkhd` / `mdhd` creation time | UTC | ISO-BMFF defines these as UTC |
+| file modification time | the capture instant | what apps fall back to, including for files nothing can be embedded in |
+
+Photos are rebuilt (prefix + new Exif segment + the original bytes, written to
+a temp file and atomically renamed) because adding a tag changes the file's
+size; the compressed image itself is copied through untouched. Videos are only
+ever patched in place — a few bytes overwritten, never a container rewrite, so
+a 3 GB clip costs a handful of writes rather than 3 GB of NAS traffic. A photo
+whose Exif holds a MakerNote or a thumbnail IFD is reported and skipped rather
+than rebuilt, since relocating its values would invalidate those.
+
+**This intentionally changes the bytes**, so a repaired file no longer matches
+the origin's ETag. `fix-dates` moves the origin's size and hash aside into
+`origin_size`/`origin_checksum` and records a local md5 in their place, so
+`verify --deep` keeps working and `verify --fix` will not delete a repaired
+file and download the dateless one again. Computing that md5 means reading each
+repaired file end to end, so a run that repairs large videos is bound by your
+link to the destination, not by the size of the edits — use `--since`/`--until`
+to do it in batches. Re-running is safe and idempotent:
+files that already agree with GoPro are left byte-for-byte alone.
+
+### When the camera clock was reset
+
+A GoPro that loses power resets its clock, so a whole morning's filming comes
+back dated `2015-01-01` — but with the clips' *relative* times intact
+(`02:43`, `03:05`, `04:13`). GoPro knows the true date, yet reports a single
+timestamp for every clip in that batch, so writing it verbatim would fix the
+date and collapse the session onto one second, losing the ordering.
+
+So when a folder's clips carry distinct embedded times, `fix-dates` slides the
+whole folder by the one offset that lands its earliest clip on GoPro's time.
+The dates come out right and the gaps between clips survive:
+
+```
+2015-01-01 02:43:01  ->  2017-02-11 04:49:12
+2015-01-01 03:05:26  ->  2017-02-11 05:11:37
+2015-01-01 03:19:13  ->  2017-02-11 05:25:24
+```
+
+Folders whose clips already share one identical timestamp have no ordering to
+protect and simply get GoPro's value. `--flatten-to-api` forces that everywhere.
+
+Cameras commonly write capture-*local* time into the video field the spec calls
+UTC. That is a convention rather than damage, so a video matching either
+reading is left alone; `--video-utc` normalises those too. `--keep-mtime`
+leaves modification times untouched, and `--tolerance N` sets how many seconds
+of drift to accept before rewriting (default 120).
 
 ## Downloading straight to a NAS
 
