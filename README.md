@@ -355,8 +355,32 @@ than rebuilt, since relocating its values would invalidate those.
 the origin's ETag. `fix-dates` moves the origin's size and hash aside into
 `origin_size`/`origin_checksum` and records a local md5 in their place, so
 `verify --deep` keeps working and `verify --fix` will not delete a repaired
-file and download the dateless one again. Re-running is safe and idempotent:
+file and download the dateless one again. Computing that md5 means reading each
+repaired file end to end, so a run that repairs large videos is bound by your
+link to the destination, not by the size of the edits — use `--since`/`--until`
+to do it in batches. Re-running is safe and idempotent:
 files that already agree with GoPro are left byte-for-byte alone.
+
+### When the camera clock was reset
+
+A GoPro that loses power resets its clock, so a whole morning's filming comes
+back dated `2015-01-01` — but with the clips' *relative* times intact
+(`02:43`, `03:05`, `04:13`). GoPro knows the true date, yet reports a single
+timestamp for every clip in that batch, so writing it verbatim would fix the
+date and collapse the session onto one second, losing the ordering.
+
+So when a folder's clips carry distinct embedded times, `fix-dates` slides the
+whole folder by the one offset that lands its earliest clip on GoPro's time.
+The dates come out right and the gaps between clips survive:
+
+```
+2015-01-01 02:43:01  ->  2017-02-11 04:49:12
+2015-01-01 03:05:26  ->  2017-02-11 05:11:37
+2015-01-01 03:19:13  ->  2017-02-11 05:25:24
+```
+
+Folders whose clips already share one identical timestamp have no ordering to
+protect and simply get GoPro's value. `--flatten-to-api` forces that everywhere.
 
 Cameras commonly write capture-*local* time into the video field the spec calls
 UTC. That is a convention rather than damage, so a video matching either
