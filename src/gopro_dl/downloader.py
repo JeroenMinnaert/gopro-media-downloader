@@ -43,6 +43,7 @@ class FileOutcome:
     reason: str = ""
     checksum: str | None = None
     checksum_state: str | None = None  # ok | mismatch | unverified
+    size_corrected: bool = False  # the listing size was stale; `size` is the origin's
 
 
 @dataclass
@@ -52,6 +53,25 @@ class StreamResult:
     total: int | None = None
     etag: str | None = None
     verifier: EtagVerifier | None = None
+
+
+# GoPro re-muxes some uploads server-side without updating the listing's
+# file_size, leaving it a few KB off what the origin actually stores. That drift
+# is minuscule next to a truncated transfer or a lost chapter, so a tight
+# tolerance tells the two apart: metadata noise yields to the origin, real data
+# loss still fails.
+# Observed drift is ~3 KB on files of 20-100 MB (0.003-0.02%); truncation and
+# lost chapters are whole fractions of the file. The bound is deliberately
+# relative, with no absolute floor -- a flat allowance would swallow the total
+# loss of a small file.
+DRIFT_FRACTION = 0.001
+
+
+def within_listing_drift(listed: int, actual: int) -> bool:
+    """True when listed vs actual is stale metadata rather than missing data."""
+    if listed <= 0:
+        return False
+    return abs(actual - listed) <= listed * DRIFT_FRACTION
 
 
 class Downloader:
@@ -152,6 +172,18 @@ class Downloader:
             actual = final.stat().st_size
             if expected is None or actual == expected:
                 return FileOutcome("done", 0, actual, "already_on_disk")
+            if within_listing_drift(expected, actual):
+                # Same stale listing size as below, met one path earlier: a
+                # rebuilt manifest re-reads file_size from the API, so without
+                # this a good file on disk would be deleted and fetched again.
+                log_event(
+                    logging.WARNING,
+                    "listing_size_stale",
+                    path=relpath,
+                    listed=expected,
+                    origin=actual,
+                )
+                return FileOutcome("done", 0, actual, "already_on_disk", size_corrected=True)
             log_event(
                 logging.WARNING,
                 "existing_file_size_mismatch",
@@ -165,6 +197,7 @@ class Downloader:
         refreshes = 0
         last_stream_error = ""
         transferred = 0  # bytes actually pulled this run, excluding a resumed .part
+        size_corrected = False  # True once a stale listing size yielded to the origin
         etag: str | None = file_row["checksum"]
         verifier: EtagVerifier | None = None
         handle = self.on_file_start(relpath, expected) if self.on_file_start else None
@@ -198,6 +231,26 @@ class Downloader:
                         log_event(
                             logging.DEBUG, "size_learned", path=relpath, expected=expected
                         )
+                    elif (
+                        advertised
+                        and expected is not None
+                        and advertised != expected
+                        and within_listing_drift(expected, advertised)
+                    ):
+                        # Stale listing metadata: the origin is what actually
+                        # exists, so it wins. Without this the file fails
+                        # identically on every retry, forever. A larger
+                        # disagreement is left alone and still fails below --
+                        # that is a truncated transfer, not metadata drift.
+                        log_event(
+                            logging.WARNING,
+                            "listing_size_stale",
+                            path=relpath,
+                            listed=expected,
+                            origin=advertised,
+                        )
+                        expected = advertised
+                        size_corrected = True
                     if written is not None:
                         transferred += written
                         break
@@ -266,6 +319,7 @@ class Downloader:
                 "done", transferred, actual,
                 "" if expected is not None else "size_unverified",
                 checksum=etag, checksum_state=checksum_state,
+                size_corrected=size_corrected,
             )
             return outcome
         except ShuttingDown:
@@ -364,7 +418,7 @@ class Downloader:
             # A dropped connection mid-stream leaves a valid .part; resuming
             # from its offset is the whole point of writing it incrementally.
             log_event(logging.WARNING, "stream_interrupted", path=relpath, error=str(exc))
-            return StreamResult(None, str(exc)), None
+            return StreamResult(None, str(exc))
 
 
 def _advertised_total(response: httpx.Response, offset: int) -> int | None:

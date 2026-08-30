@@ -407,20 +407,33 @@ class Manifest:
         file_id: int,
         actual_size: int,
         size_unverified: bool = False,
+        size_corrected: bool = False,
         checksum: str | None = None,
         checksum_algo: str | None = None,
         checksum_state: str | None = None,
     ) -> None:
+        # A stale listing size is overwritten by the origin's, or `verify` would
+        # flag the file forever and `verify --fix` would delete a good file and
+        # fetch it again on every run.
+        correction = "expected_size=?, " if size_corrected else ""
+        params = (
+            actual_size,
+            int(size_unverified),
+            *((actual_size,) if size_corrected else ()),
+            checksum,
+            checksum_algo,
+            checksum_state,
+            _now(),
+            file_id,
+        )
         with self._lock:
             self.conn.execute(
                 "UPDATE media_files SET state='done', actual_size=?, size_unverified=?, "
+                f"{correction}"
                 "checksum=COALESCE(?, checksum), checksum_algo=COALESCE(?, checksum_algo), "
                 "checksum_state=COALESCE(?, checksum_state), completed_at=?, "
                 "last_error=NULL WHERE id=?",
-                (
-                    actual_size, int(size_unverified), checksum, checksum_algo,
-                    checksum_state, _now(), file_id,
-                ),
+                params,
             )
             self.conn.commit()
 

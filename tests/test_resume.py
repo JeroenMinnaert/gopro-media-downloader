@@ -12,6 +12,9 @@ from gopro_dl.downloader import Downloader, ShuttingDown
 
 CONTENT = bytes(range(256)) * 8  # 2048 deterministic bytes
 CDN = "https://cdn.gopro.test/source.mp4"
+FIXTURE_SOURCE_URL = (
+    "https://media-cdn-vod.gopro.test/user/1234567890123456789/source/default/1.mp4"
+)
 
 
 def build(manifest, tmp_path, client, shutdown=None):
@@ -219,3 +222,137 @@ def test_chapters_each_get_their_own_row_and_path(manifest, tmp_path, client):
         "2023-07-15/GX020001.MP4",
         "2023-07-15/GX030001.MP4",
     ]
+
+
+@respx.mock
+def test_stale_listing_size_yields_to_the_origin(manifest, tmp_path, client):
+    """GoPro's listing file_size is sometimes a few KB larger than the object S3
+    actually holds. The origin wins, otherwise the file fails forever.
+
+    Sized like the real cases: a 3280-byte overstatement on a 5 MiB file.
+    """
+    big = bytes(range(256)) * 20480  # 5 MiB
+    respx.get(CDN).mock(return_value=httpx.Response(200, content=big))
+    listed = len(big) + 3280
+    item, row = seed(manifest, tmp_path, size=listed)
+
+    outcome = build(manifest, tmp_path, client).fetch_file(
+        item, source_of(item, size=listed), row, "2023-07-15"
+    )
+
+    final = tmp_path / "media" / "2023-07-15" / "GX010001.MP4"
+    assert outcome.state == "done"
+    assert outcome.size == len(big)
+    assert final.read_bytes() == big
+
+
+@respx.mock
+def test_short_body_against_the_origin_size_still_fails(manifest, tmp_path, client):
+    """Yielding to the origin must not swallow a genuinely truncated transfer:
+    the server advertises the full length and then delivers less."""
+    respx.get(CDN).mock(
+        return_value=httpx.Response(
+            200,
+            content=CONTENT[:1000],
+            headers={"Content-Length": str(len(CONTENT))},
+        )
+    )
+    item, row = seed(manifest, tmp_path)
+
+    outcome = build(manifest, tmp_path, client).fetch_file(
+        item, source_of(item), row, "2023-07-15"
+    )
+
+    assert outcome.state == "failed"
+    assert "size mismatch" in outcome.reason
+
+
+@respx.mock
+def test_connection_drop_midstream_resumes_instead_of_crashing(manifest, tmp_path, client):
+    """A dropped connection returns a StreamResult, not a tuple -- the caller
+    reads .written off it, so the wrong shape crashed the whole resume path."""
+    calls = {"n": 0}
+
+    def flaky(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ReadError("connection reset")
+        return ranged(request)
+
+    respx.get(CDN).mock(side_effect=flaky)
+    respx.get(f"{API_HOST}/media/aaa111/download").mock(
+        return_value=httpx.Response(200, json=load_fixture("download_single"))
+    )
+    # the refreshed signed URL the download endpoint hands back
+    respx.get(FIXTURE_SOURCE_URL).mock(side_effect=ranged)
+    item, row = seed(manifest, tmp_path)
+
+    outcome = build(manifest, tmp_path, client).fetch_file(
+        item, source_of(item), row, "2023-07-15"
+    )
+
+    assert outcome.state == "done"
+    assert (tmp_path / "media" / "2023-07-15" / "GX010001.MP4").read_bytes() == CONTENT
+
+
+@respx.mock
+def test_origin_size_far_below_the_listing_is_not_tolerated(manifest, tmp_path, client):
+    """Only metadata-scale drift yields to the origin. A server advertising a
+    fraction of the expected size is data loss and must still fail."""
+    respx.get(CDN).mock(return_value=httpx.Response(200, content=CONTENT[:100]))
+    item, row = seed(manifest, tmp_path, size=10 * 1024 * 1024)
+
+    outcome = build(manifest, tmp_path, client).fetch_file(
+        item, source_of(item, size=10 * 1024 * 1024), row, "2023-07-15"
+    )
+
+    assert outcome.state == "failed" and "size mismatch" in outcome.reason
+
+
+@respx.mock
+def test_corrected_size_is_persisted_so_verify_stays_clean(manifest, tmp_path, client):
+    """The stale expectation must not survive in the manifest: `verify` compares
+    on-disk bytes against expected_size, and `verify --fix` would delete the good
+    file and fetch it again on every run."""
+    from gopro_dl.verify import verify as run_verify
+
+    big = bytes(range(256)) * 20480  # 5 MiB
+    respx.get(CDN).mock(return_value=httpx.Response(200, content=big))
+    listed = len(big) + 3280
+    item, row = seed(manifest, tmp_path, size=listed)
+
+    runner_row = manifest.get_file(item.id, 1)
+    outcome = build(manifest, tmp_path, client).fetch_file(
+        item, source_of(item, size=listed), row, "2023-07-15"
+    )
+    assert outcome.size_corrected
+    manifest.mark_done(runner_row["id"], outcome.size, size_corrected=outcome.size_corrected)
+
+    stored = manifest.get_file(item.id, 1)
+    assert stored["expected_size"] == len(big)
+
+    report = run_verify(manifest, tmp_path / "media")
+    assert report.wrong_size == []
+
+
+@respx.mock
+def test_good_file_on_disk_survives_a_stale_rebuilt_manifest(manifest, tmp_path, client):
+    """A rebuilt manifest re-reads file_size from the API. The file already on
+    disk is correct, so it must be kept rather than deleted and re-downloaded."""
+    big = bytes(range(256)) * 20480  # 5 MiB
+    route = respx.get(CDN).mock(return_value=httpx.Response(200, content=big))
+    listed = len(big) + 3280
+    item, row = seed(manifest, tmp_path, size=listed)
+
+    final = tmp_path / "media" / "2023-07-15" / "GX010001.MP4"
+    final.parent.mkdir(parents=True)
+    final.write_bytes(big)
+
+    outcome = build(manifest, tmp_path, client).fetch_file(
+        item, source_of(item, size=listed), row, "2023-07-15"
+    )
+
+    assert outcome.state == "done" and outcome.reason == "already_on_disk"
+    assert outcome.size_corrected
+    assert not route.called  # nothing re-downloaded
+    assert final.read_bytes() == big
