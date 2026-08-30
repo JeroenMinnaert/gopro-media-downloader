@@ -1,4 +1,4 @@
-"""Configuration: CLI flag > env var > .env > default."""
+"""Configuration: CLI flag > env var > config file > default."""
 
 from __future__ import annotations
 
@@ -8,8 +8,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .locations import AppDirs, default_dest
 from .models import DEFAULT_TYPES
 from .paths import parse_timezone
+from .preflight import is_network_filesystem
 
 STATE_DIRNAME = ".gopro-dl"
 MANIFEST_NAME = "manifest.db"
@@ -19,6 +21,7 @@ MAX_CONCURRENCY = 8
 @dataclass
 class Config:
     dest: Path
+    app_dirs: AppDirs
     token: str | None = None
     token_file: Path | None = None
     user_id: str | None = None
@@ -51,12 +54,20 @@ def _expand(value: str | None) -> Path | None:
     return Path(value).expanduser() if value else None
 
 
-def load_config(args) -> Config:
-    """Build a Config from parsed CLI args, environment and .env."""
-    load_dotenv(override=False)
+def load_config(args, app_dirs: AppDirs) -> Config:
+    """Build a Config from parsed CLI args, environment and the config file.
 
-    dest = _expand(getattr(args, "dest", None) or _env("GOPRO_DEST") or "./downloads")
-    token_file = _expand(getattr(args, "token_file", None) or _env("GOPRO_TOKEN_FILE"))
+    `app_dirs` is resolved once by the caller (cli.py: main()) -- this
+    function never decides where gopro-dl's own state lives, only where a
+    single run's settings come from.
+    """
+    load_dotenv(app_dirs.config_file, override=False)
+
+    dest = _expand(getattr(args, "dest", None) or _env("GOPRO_DEST")) or default_dest()
+    token_file = (
+        _expand(getattr(args, "token_file", None) or _env("GOPRO_TOKEN_FILE"))
+        or app_dirs.token_file
+    )
 
     concurrency = getattr(args, "concurrency", None)
     if concurrency is None:
@@ -84,6 +95,7 @@ def load_config(args) -> Config:
 
     return Config(
         dest=dest,
+        app_dirs=app_dirs,
         fallback_timezone=fallback_tz,
         token=getattr(args, "token", None) or _env("GOPRO_TOKEN"),
         token_file=token_file,
@@ -95,4 +107,28 @@ def load_config(args) -> Config:
         ),
         non_interactive=bool(getattr(args, "non_interactive", False)),
         quiet=bool(getattr(args, "quiet", False)),
+    )
+
+
+def apply_network_manifest_redirect(config: Config) -> str | None:
+    """If `dest` looks like a network mount and no --manifest-dir was given,
+    point the manifest and logs at a local per-user location instead --
+    SMB/NFS can silently corrupt SQLite's WAL journal. Mutates `config` in
+    place; returns a notice to display, or None if nothing changed.
+    """
+    if config.manifest_dir is not None:
+        return None
+    if (config.dest / STATE_DIRNAME / MANIFEST_NAME).exists():
+        # Already colocated from a previous run -- never split an established
+        # manifest by redirecting out from under it, and skip the mount/df
+        # subprocess call on what's presumably the common, fast, repeated path
+        # (status/report on an already-running sync).
+        return None
+    if not is_network_filesystem(config.dest):
+        return None
+    config.manifest_dir = config.app_dirs.manifest_dir_for(config.dest)
+    return (
+        f"{config.dest} looks like a network mount -- keeping the manifest and logs "
+        f"locally at {config.manifest_dir} instead (SMB/NFS can corrupt SQLite's WAL "
+        f"journal). Override with --manifest-dir."
     )

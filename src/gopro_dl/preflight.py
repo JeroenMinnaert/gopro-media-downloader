@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,6 +14,9 @@ from .logging_setup import log_event
 
 HEADROOM_FACTOR = 1.05
 HEADROOM_BYTES = 5 * 1024**3
+
+NETWORK_FS_TYPES = {"smbfs", "cifs", "smb3", "nfs", "nfs3", "nfs4", "afpfs", "webdav"}
+_MACOS_MOUNT_RE = re.compile(r"^.+ on (?P<mount>/.*?) \((?P<type>[^,)]+)")
 
 
 class PreflightError(RuntimeError):
@@ -50,6 +55,15 @@ def check_destination(dest: Path, create: bool = True) -> None:
         raise PreflightError(f"destination {dest} is not writable: {exc}") from exc
 
 
+def _run_lines(cmd: list[str]) -> list[str] | None:
+    """Run `cmd`, returning its stdout split into lines, or None on failure."""
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.strip().splitlines()
+
+
 def _df_free_bytes(path: Path) -> int | None:
     """Free bytes according to `df`, which uses statfs64.
 
@@ -58,13 +72,8 @@ def _df_free_bytes(path: Path) -> int | None:
     exactly 2**32 blocks -- which would make the pre-flight refuse a run on a
     destination that has plenty of room.
     """
-    try:
-        out = subprocess.run(
-            ["df", "-Pk", str(path)], capture_output=True, text=True, timeout=15, check=True
-        ).stdout.strip().splitlines()
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if len(out) < 2:
+    out = _run_lines(["df", "-Pk", str(path)])
+    if not out or len(out) < 2:
         return None
     # POSIX format: Filesystem 1024-blocks Used Available Capacity Mounted-on
     fields = out[-1].split()
@@ -96,3 +105,42 @@ def check_disk_space(dest: Path, required: int) -> DiskReport:
     free = free_space(dest)
     needed = int(required * HEADROOM_FACTOR) + HEADROOM_BYTES
     return DiskReport(free=free, required=needed, ok=free >= needed)
+
+
+def _fs_type_macos(path: Path) -> str | None:
+    """Parse `mount`, matching the mount point that's the most specific
+    ancestor of `path` (i.e. has the most path segments)."""
+    lines = _run_lines(["mount"])
+    if lines is None:
+        return None
+    best_depth, best_type = -1, None
+    for line in lines:
+        m = _MACOS_MOUNT_RE.match(line)
+        if not m:
+            continue
+        mount_point = Path(m["mount"])
+        if mount_point != path and mount_point not in path.parents:
+            continue
+        depth = len(mount_point.parts)
+        if depth > best_depth:
+            best_depth, best_type = depth, m["type"]
+    return best_type
+
+
+def _fs_type_linux(path: Path) -> str | None:
+    out = _run_lines(["df", "--output=fstype", str(path)])
+    if not out or len(out) < 2:
+        return None
+    return out[-1].strip()
+
+
+def is_network_filesystem(path: Path) -> bool:
+    """Best-effort: is `path` (or its nearest existing ancestor) on a network
+    mount (SMB/NFS/AFP/...)? Used to steer the manifest away from mounts that
+    silently corrupt SQLite's WAL journal -- never to block a run, so any
+    detection failure (command missing, unexpected output) just means False.
+    """
+    resolved = path.resolve()
+    existing = next(p for p in (resolved, *resolved.parents) if p.exists())
+    fstype = _fs_type_macos(existing) if sys.platform == "darwin" else _fs_type_linux(existing)
+    return (fstype or "").lower() in NETWORK_FS_TYPES

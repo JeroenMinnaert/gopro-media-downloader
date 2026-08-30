@@ -1,0 +1,20 @@
+# Copy to docker-compose.yml and adjust the two host paths below.
+#
+# One-time setup, before starting this: run `gopro-dl setup` on a machine
+# with a display (it needs a real browser window to log in), then copy the
+# `token` and `config.env` it wrote into ./gopro-dl-config/ here.
+
+services:
+  gopro-dl:
+    build: .
+    restart: unless-stopped
+    environment:
+      GOPRO_DL_HOME: /config
+      GOPRO_DEST: /media
+      GOPRO_TIMEZONE: Europe/Brussels
+      # Standard 5-field cron syntax; remove this line to run once and exit
+      # instead of becoming a long-lived scheduler.
+      GOPRO_DL_CRON_SCHEDULE: "0 3 * * *"
+    volumes:
+      - ./gopro-dl-config:/config
+      - /volume1/GoPro:/media # <- your NAS media path

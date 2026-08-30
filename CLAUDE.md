@@ -30,6 +30,20 @@ python3 -m venv .venv
 .venv/bin/gopro-dl sync --dry-run --limit 5
 ```
 
+Local dev: the checked-in `.envrc` sets `GOPRO_DL_HOME=$PWD/.dev-state`
+(gitignored) so the token, config file, and browser-login profile land
+inside the repo instead of your real `~/Library/Application Support`. With
+direnv installed and hooked into your shell, `direnv allow` once and it's
+automatic; without direnv, `locations.py: _read_envrc_home()` reads that
+same line itself (via `dotenv_values`, not real shell evaluation) as a
+fallback, walking up from cwd to find it. Comment the line out (or run from
+outside the repo) to get the real OS locations instead -- there's no
+install-type detection anywhere in the code; `GOPRO_DL_HOME` is the only
+thing that ever decides this. A `.envrc` is only honored if it's owned by
+the current user and not group/world-writable (`_envrc_is_trustworthy()`)
+-- otherwise another local user on a shared machine could plant one above
+your cwd and redirect your token/cookies into a directory they control.
+
 Tests are fully mocked (respx for HTTP) — no network access or real GoPro
 token needed to run the suite. Fixtures live in `tests/fixtures/`.
 
@@ -37,7 +51,17 @@ CI (`.github/workflows/ci.yml`) runs ruff, then pytest across Python
 3.11/3.12/3.13 on **both** ubuntu-latest and macos-latest — macOS is not
 incidental, see Architecture below. It also smoke-tests the packaged entry
 point from outside the source tree and checks that a clean environment (no
-`GOPRO_*` vars, no `.env`) yields no usable token.
+`GOPRO_*` vars, no config file) yields no usable token.
+
+A separate workflow (`.github/workflows/docker-publish.yml`) builds the
+`Dockerfile` (linux/amd64 + linux/arm64) and pushes it to Docker Hub as
+`<DOCKERHUB_USERNAME>/gopro-media-downloader:latest` and `:<sha>` on every
+push to `main` that touches `Dockerfile`, `docker/`, `src/`, or
+`pyproject.toml` (or via manual dispatch). It authenticates with the repo
+secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access
+token, not the account password) — create the target repository on Docker
+Hub as Private *before* the first push, since Docker Hub does not
+necessarily default a new, auto-created repository to private.
 
 ## Architecture
 
@@ -98,4 +122,21 @@ this ordering is load-bearing for not losing work.
 - macOS `smbfs` truncates `statvfs` block counts to 32 bits, so
   `preflight.py` shells out to `df` for free-space checks instead of using
   `shutil.disk_usage` — this is the reason CI runs on macOS at all.
-- Config precedence is flag → env var → `.env` → default (`config.py`).
+- Config precedence is flag → env var → config file → default (`config.py`).
+  The config file's own location is a separate, one-variable question
+  (`GOPRO_DL_HOME` set or unset — see `locations.py`), resolved once in
+  `cli.py: main()` and carried on `Config.app_dirs` from there; nothing else
+  in the codebase decides where gopro-dl's state lives.
+- `preflight.py: is_network_filesystem()` detects a network `--dest` (`mount`
+  on macOS, `df --output=fstype` on Linux) so `config.py:
+  apply_network_manifest_redirect()` can steer the manifest/logs onto local
+  disk automatically — SMB/NFS silently corrupt SQLite's WAL journal. Only
+  applies when `--manifest-dir` wasn't given explicitly, and only runs for
+  the commands that actually open the manifest (`cli.py: build_parser()`'s
+  `needs_manifest` flag, set per-subcommand via `common()`); fails open
+  (assumes local) on any detection error.
+- Two unrelated storage roots, do not conflate them: `<dest>/.gopro-dl/`
+  (`config.py`) is the per-destination manifest/log dir and travels with a
+  given `--dest`; `locations.py: AppDirs` (`platformdirs`-based) is the
+  tool's own global, per-user state — the saved token, its config file, and
+  the persisted Playwright browser-login profile (`browser_login.py`).

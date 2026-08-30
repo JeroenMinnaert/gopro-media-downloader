@@ -311,6 +311,7 @@ class DownloadRunner:
             self.tokens,
             validate,
             self.console,
+            self.config.app_dirs.browser_profile,
             non_interactive=self.config.non_interactive,
             shutdown=self.shutdown,
         )

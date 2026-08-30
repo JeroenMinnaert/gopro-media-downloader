@@ -17,11 +17,22 @@ import threading
 import time
 from pathlib import Path
 
+from .browser_login import fetch_cached as fetch_cached_browser_token
+from .browser_login import login as login_via_browser
 from .logging_setup import log_event
 
 
 class TokenError(RuntimeError):
     pass
+
+
+def token_instructions(destination: str) -> str:
+    """Steps to pull a fresh gp_access_token cookie, ending at `destination`."""
+    return (
+        "  1. Open [link]https://gopro.com/media-library/[/link] in Chrome (log in if needed)\n"
+        "  2. DevTools (Cmd+Option+I) -> Application -> Cookies -> gopro.com -> [bold]gp_access_token[/bold]\n"
+        f"  3. Copy the value into {destination}"
+    )
 
 
 class TokenProvider:
@@ -127,6 +138,7 @@ def refresh_token_interactively(
     provider: TokenProvider,
     validate,
     console,
+    browser_profile_dir: Path,
     non_interactive: bool = False,
     poll_seconds: float = 30.0,
     timeout_seconds: float = 3600.0,
@@ -157,19 +169,32 @@ def refresh_token_interactively(
             return False
         console.print()
         console.print("[bold yellow]GoPro token expired or rejected.[/bold yellow]")
-        console.print(
-            f"  1. Open [link]https://gopro.com/media-library/[/link] in Chrome (log in if needed)\n"
-            f"  2. DevTools (Cmd+Option+I) -> Application -> Cookies -> gopro.com -> [bold]gp_access_token[/bold]\n"
-            f"  3. Copy the value into [bold]{provider.source_description}[/bold]"
-        )
+
+        # A free, silent check: if a saved browser session has since
+        # refreshed (or the user logged back in elsewhere), this beats
+        # making them do anything at all.
+        cached = fetch_cached_browser_token(browser_profile_dir)
+        if cached and cached != provider.token:
+            console.print("[dim]Found a saved browser session - trying it.[/dim]")
+            provider.set(cached)
+            if validate(provider.token):
+                console.print("[green]Token accepted. Resuming.[/green]")
+                return True
+
+        console.print(token_instructions(f"[bold]{provider.source_description}[/bold]"))
         try:
             answer = console.input(
-                "Press [bold]Enter[/bold] once updated, paste a token directly, or Ctrl-C to stop: "
+                "Press [bold]Enter[/bold] once updated, paste a token, type "
+                "[bold]b[/bold] to log into GoPro in a browser, or Ctrl-C to stop: "
             ).strip()
         except (EOFError, KeyboardInterrupt):
             return False
 
-        if answer:
+        if answer.lower() == "b":
+            fresh = login_via_browser(console, browser_profile_dir)
+            if fresh:
+                provider.set(fresh)
+        elif answer:
             provider.set(answer)
         else:
             provider.reload()
