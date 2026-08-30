@@ -53,6 +53,16 @@ incidental, see Architecture below. It also smoke-tests the packaged entry
 point from outside the source tree and checks that a clean environment (no
 `GOPRO_*` vars, no config file) yields no usable token.
 
+A separate workflow (`.github/workflows/docker-publish.yml`) builds the
+`Dockerfile` (linux/amd64 + linux/arm64) and pushes it to Docker Hub as
+`<DOCKERHUB_USERNAME>/gopro-media-downloader:latest` and `:<sha>` on every
+push to `main` that touches `Dockerfile`, `docker/`, `src/`, or
+`pyproject.toml` (or via manual dispatch). It authenticates with the repo
+secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access
+token, not the account password) — create the target repository on Docker
+Hub as Private *before* the first push, since Docker Hub does not
+necessarily default a new, auto-created repository to private.
+
 ## Architecture
 
 ### Pipeline
