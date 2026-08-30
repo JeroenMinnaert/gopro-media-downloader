@@ -3,6 +3,7 @@
 import hashlib
 
 from conftest import make_item
+
 from gopro_dl.verify import verify
 
 CONTENT = b"x" * 500

@@ -52,7 +52,7 @@ class MediaItem:
     raw: dict[str, Any] = field(repr=False, default_factory=dict)
 
     @classmethod
-    def from_json(cls, data: dict[str, Any]) -> "MediaItem":
+    def from_json(cls, data: dict[str, Any]) -> MediaItem:
         return cls(
             id=str(data.get("id", "")),
             type=str(data.get("type") or ""),

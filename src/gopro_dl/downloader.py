@@ -14,16 +14,16 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 import httpx
 
-from .api import ApiError, AuthExpired, GoProClient
+from .api import GoProClient
+from .integrity import EtagVerifier
 from .logging_setup import log_event
 from .manifest import Manifest
-from .integrity import EtagVerifier
 from .models import MediaItem, SourceFile, parse_download_response
 from .paths import safe_filename, target_path
 
@@ -99,10 +99,10 @@ class Downloader:
                         date_folder,
                         filename,
                         item.id,
-                        owner_of=lambda p: self.manifest.path_owner(
-                            p,
-                            exclude_media_id=item.id,
-                            exclude_item_number=source.item_number,
+                        owner_of=lambda p, number=source.item_number: (
+                            self.manifest.path_owner(
+                                p, exclude_media_id=item.id, exclude_item_number=number
+                            )
                         ),
                         item_number=source.item_number,
                         chapter_count=len(files),
@@ -166,7 +166,11 @@ class Downloader:
         refreshes = 0
         last_stream_error = ""
         transferred = 0  # bytes actually pulled this run, excluding a resumed .part
-        etag: str | None = file_row["checksum"] if "checksum" in file_row.keys() else None
+        # NOT `in file_row`: sqlite3.Row membership tests values, not column
+        # names, so the "simplified" form would always be False.
+        etag: str | None = (
+            file_row["checksum"] if "checksum" in file_row.keys() else None  # noqa: SIM118
+        )
         verifier: EtagVerifier | None = None
         handle = self.on_file_start(relpath, expected) if self.on_file_start else None
         outcome = FileOutcome("failed", 0, 0, "aborted")

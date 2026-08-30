@@ -1,5 +1,7 @@
 """Date foldering and the collision scheme that keeps resume working."""
 
+from zoneinfo import ZoneInfoNotFoundError
+
 import pytest
 
 from gopro_dl.paths import (
@@ -122,5 +124,5 @@ def test_parse_timezone_accepts_names_and_offsets_and_rejects_junk():
     assert parse_timezone("Europe/Brussels") is not None
     assert parse_timezone("+02:00").utcoffset(None).total_seconds() == 7200
     assert parse_timezone("-0500").utcoffset(None).total_seconds() == -18000
-    with _pytest.raises(Exception):
+    with _pytest.raises((ZoneInfoNotFoundError, ValueError)):
         parse_timezone("Mars/Olympus")

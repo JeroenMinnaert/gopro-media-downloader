@@ -1,6 +1,7 @@
 """Manifest sync semantics: idempotency, filters, recovery, accounting."""
 
 from conftest import make_item
+
 from gopro_dl.manifest import Manifest
 
 

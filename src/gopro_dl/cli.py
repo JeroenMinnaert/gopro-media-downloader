@@ -7,14 +7,13 @@ import logging
 import signal
 import sys
 import threading
-from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
 
 from .api import AuthExpired, GoProClient
-from .backfill import backfill_etags
 from .auth import AuthGate, TokenError, TokenProvider
+from .backfill import backfill_etags
 from .circuit import CircuitBreaker
 from .config import Config, load_config
 from .logging_setup import log_event, setup_logging

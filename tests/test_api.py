@@ -3,8 +3,8 @@
 import httpx
 import pytest
 import respx
-
 from conftest import load_fixture, make_item
+
 from gopro_dl.api import API_HOST, ApiError, AuthExpired
 from gopro_dl.models import DEFAULT_TYPES, parse_download_response
 

@@ -2,8 +2,8 @@
 
 import httpx
 import respx
-
 from conftest import load_fixture, make_item
+
 from gopro_dl.api import API_HOST
 from gopro_dl.backfill import backfill_etags
 

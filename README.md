@@ -1,5 +1,7 @@
 # gopro-media-downloader
 
+[![CI](https://github.com/JeroenMinnaert/gopro-media-downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/JeroenMinnaert/gopro-media-downloader/actions/workflows/ci.yml)
+
 Downloads your entire GoPro Plus cloud library in **original quality**, into flat
 `YYYY-MM-DD/` folders named by **capture date**, resumably — built for a
 multi-hour, multi-terabyte backup run straight to a NAS.
@@ -318,7 +320,16 @@ looked like success:
 ```bash
 .venv/bin/pip install -e '.[dev]'
 .venv/bin/python -m pytest -q
+.venv/bin/ruff check src tests
 ```
+
+CI runs on every push and pull request: ruff, then the suite across Python
+3.11/3.12/3.13 on both Linux and macOS. macOS is not incidental — the
+free-space check parses `df` precisely because smbfs truncates statvfs, and
+that path only exists on Darwin. Two extra guards catch what unit tests cannot:
+a CLI smoke test run from outside the source tree (packaging and entry-point
+breakage) and a check that a clean environment yields no usable token
+(config-precedence regressions).
 
 84 tests, all against mocked API responses — no network and no token needed.
 They cover pagination, source-variation selection (including the proxy trap and

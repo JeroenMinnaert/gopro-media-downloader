@@ -57,7 +57,7 @@ class DownloadProgress:
     def stop(self) -> None:
         self.progress.stop()
 
-    def __enter__(self) -> "DownloadProgress":
+    def __enter__(self) -> DownloadProgress:
         self.start()
         return self
 

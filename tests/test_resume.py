@@ -5,8 +5,8 @@ import threading
 import httpx
 import pytest
 import respx
-
 from conftest import load_fixture, make_item
+
 from gopro_dl.api import API_HOST
 from gopro_dl.downloader import Downloader, ShuttingDown
 

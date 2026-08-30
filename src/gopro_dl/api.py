@@ -7,7 +7,8 @@ import logging
 import random
 import threading
 import time
-from typing import Any, Callable, Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import httpx
 
@@ -51,8 +52,8 @@ def parse_retry_after(value: str | None) -> float | None:
     import datetime as _dt
 
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=_dt.timezone.utc)
-    delay = (parsed - _dt.datetime.now(_dt.timezone.utc)).total_seconds()
+        parsed = parsed.replace(tzinfo=_dt.UTC)
+    delay = (parsed - _dt.datetime.now(_dt.UTC)).total_seconds()
     return max(delay, 0.0)
 
 
@@ -95,7 +96,7 @@ class GoProClient:
     def close(self) -> None:
         self.client.close()
 
-    def __enter__(self) -> "GoProClient":
+    def __enter__(self) -> GoProClient:
         return self
 
     def __exit__(self, *exc) -> None:

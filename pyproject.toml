@@ -18,6 +18,7 @@ dev = [
     "pytest>=8.0",
     "respx>=0.21",
     "pytest-timeout>=2.3",
+    "ruff>=0.6",
 ]
 
 [project.scripts]
@@ -28,3 +29,18 @@ packages = ["src/gopro_dl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "SIM", "UP", "C4", "RUF"]
+ignore = [
+    "E501",     # long lines: the existing style runs to ~100, enforced by formatter not linter
+    "RUF059",   # unused unpacked variable reads fine in tests
+    "PYI034",   # __enter__ returning the concrete class is intentional and clear
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B008"]  # len() in a test helper default is deliberate and harmless

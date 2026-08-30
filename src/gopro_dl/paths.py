@@ -7,7 +7,7 @@ network or the filesystem.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # "+02:00", "-0700", "Z"
@@ -30,8 +30,8 @@ def parse_captured_at(value: str) -> datetime:
         raise CaptureDateError(f"unparseable captured_at: {value!r}") from exc
     if dt.tzinfo is None:
         # The API documents UTC; a naive timestamp is treated as such.
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def parse_timezone(text: str) -> timezone | ZoneInfo:
@@ -58,7 +58,7 @@ def resolve_timezone(
 
     Returns (tzinfo, warning); warning is non-None when the fallback was used.
     """
-    default = fallback or timezone.utc
+    default = fallback or UTC
     label = getattr(default, "key", None) or str(default)
 
     if raw is None or not str(raw).strip():

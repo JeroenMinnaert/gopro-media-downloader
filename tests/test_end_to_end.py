@@ -2,8 +2,8 @@
 
 import httpx
 import respx
-
 from conftest import load_fixture
+
 from gopro_dl.api import API_HOST
 from gopro_dl.cli import main
 from gopro_dl.manifest import Manifest
@@ -99,8 +99,13 @@ def test_second_run_is_a_no_op(tmp_path):
     mock_gopro()
     dest = tmp_path / "media"
     assert run(dest) == 0
-    media = lambda: {q: q.stat().st_mtime_ns for q in dest.rglob("*")
-                     if q.is_file() and ".gopro-dl" not in q.parts}
+    def media():
+        return {
+            q: q.stat().st_mtime_ns
+            for q in dest.rglob("*")
+            if q.is_file() and ".gopro-dl" not in q.parts
+        }
+
     before = media()
 
     mock_gopro()  # fresh pagination side effects for the second run

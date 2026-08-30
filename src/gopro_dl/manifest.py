@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 SCHEMA_VERSION = "1"
 
@@ -75,7 +76,7 @@ DONE_FILE_STATES = ("done", "skipped")
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class Manifest:
@@ -109,7 +110,7 @@ class Manifest:
         with self._lock:
             self.conn.close()
 
-    def __enter__(self) -> "Manifest":
+    def __enter__(self) -> Manifest:
         return self
 
     def __exit__(self, *exc) -> None:

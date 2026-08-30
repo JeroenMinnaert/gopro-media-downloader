@@ -8,8 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .paths import parse_timezone
 from .models import DEFAULT_TYPES
+from .paths import parse_timezone
 
 STATE_DIRNAME = ".gopro-dl"
 MANIFEST_NAME = "manifest.db"
@@ -64,18 +64,19 @@ def load_config(args) -> Config:
         concurrency = int(raw) if raw and raw.isdigit() else 3
     concurrency = max(1, min(int(concurrency), MAX_CONCURRENCY))
 
-    types = getattr(args, "types", None)
-    if types:
-        types = tuple(t.strip() for t in types.split(",") if t.strip())
-    else:
-        types = DEFAULT_TYPES
+    raw_types = getattr(args, "types", None)
+    types = (
+        tuple(t.strip() for t in raw_types.split(",") if t.strip())
+        if raw_types
+        else DEFAULT_TYPES
+    )
 
     tz_name = getattr(args, "timezone", None) or _env("GOPRO_TIMEZONE")
     fallback_tz = None
     if tz_name:
         try:
             fallback_tz = parse_timezone(tz_name)
-        except Exception as exc:  # noqa: BLE001 - surfaced as a clean CLI error
+        except Exception as exc:
             raise ValueError(
                 f"invalid --timezone {tz_name!r}: {exc}. "
                 "Use an IANA name like Europe/Brussels, or an offset like +02:00."

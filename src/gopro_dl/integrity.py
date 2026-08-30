@@ -49,7 +49,7 @@ def candidate_part_sizes(total: int, parts: int) -> list[int]:
     if high < low:
         return []
     first = math.ceil(low / MIB) * MIB
-    return [s for s in range(first, high + 1, MIB)][:MAX_CANDIDATES]
+    return list(range(first, high + 1, MIB))[:MAX_CANDIDATES]
 
 
 class MultipartHasher:

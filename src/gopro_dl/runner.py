@@ -14,7 +14,6 @@ import queue
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from rich.console import Console
 
@@ -26,7 +25,6 @@ from .logging_setup import log_event
 from .manifest import Manifest
 from .models import MediaItem
 from .paths import CaptureDateError, date_folder
-from .preflight import human_bytes
 
 
 @dataclass
@@ -267,7 +265,7 @@ class DownloadRunner:
             except ShuttingDown:
                 self.queue.put(row)
                 return
-            except Exception as exc:  # a worker must never die silently
+            except Exception as exc:
                 log_event(logging.ERROR, "worker_error", error=str(exc))
             finally:
                 with self._inflight_lock:

@@ -3,12 +3,11 @@
 import threading
 
 import httpx
-import pytest
 import respx
+from conftest import load_fixture
 from rich.console import Console
 
 import gopro_dl.cli as cli_module
-from conftest import load_fixture
 from gopro_dl.api import API_HOST
 from gopro_dl.auth import AuthGate, TokenProvider, refresh_token_interactively
 from gopro_dl.cli import main
