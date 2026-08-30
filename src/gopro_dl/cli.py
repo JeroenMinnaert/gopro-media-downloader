@@ -64,7 +64,6 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument(
         "--no-manifest-refresh", action="store_true", help="skip the API enumeration pass"
     )
-    sync.add_argument("--create-dest", action="store_true", default=True, help=argparse.SUPPRESS)
     sync.add_argument("--skip-preflight", action="store_true")
     sync.add_argument(
         "--non-interactive",
@@ -98,7 +97,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     token = sub.add_parser("token", help="validate the current token")
     common(token)
-    token.add_argument("--check", action="store_true", default=True)
 
     return parser
 
@@ -329,7 +327,8 @@ def print_status(manifest: Manifest, config: Config) -> None:
     if skipped:
         reasons: dict[str, int] = {}
         for row in skipped:
-            reasons[row["skip_reason"] or "unknown"] = reasons.get(row["skip_reason"] or "unknown", 0) + 1
+            reason = row["skip_reason"] or "unknown"
+            reasons[reason] = reasons.get(reason, 0) + 1
         console.print("Skipped: " + ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
     console.print(f"Destination: {config.dest}")
 

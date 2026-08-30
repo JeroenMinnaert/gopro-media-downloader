@@ -21,7 +21,7 @@ from pathlib import Path
 import httpx
 
 from .api import GoProClient
-from .integrity import EtagVerifier
+from .integrity import EtagVerifier, etag_header
 from .logging_setup import log_event
 from .manifest import Manifest
 from .models import MediaItem, SourceFile, parse_download_response
@@ -86,37 +86,7 @@ class Downloader:
         if skip_reason:
             return [], skip_reason
 
-        for source in files:
-            filename = safe_filename(source.filename, f"{item.id}_{source.item_number}")
-            # An assigned path is never recomputed -- that stability is what
-            # lets resume match files across runs.
-            existing = self.manifest.get_file(item.id, source.item_number)
-            if existing is not None:
-                relpath = existing["target_path"]
-            else:
-                with self._path_lock:
-                    relpath = target_path(
-                        date_folder,
-                        filename,
-                        item.id,
-                        owner_of=lambda p, number=source.item_number: (
-                            self.manifest.path_owner(
-                                p, exclude_media_id=item.id, exclude_item_number=number
-                            )
-                        ),
-                        item_number=source.item_number,
-                        chapter_count=len(files),
-                    )
-                    self.manifest.upsert_file(
-                        item.id,
-                        source.item_number,
-                        filename,
-                        relpath,
-                        source.size,
-                        source.checksum,
-                        source.checksum_algo,
-                    )
-                    continue
+        def upsert(source: SourceFile, filename: str, relpath: str) -> None:
             self.manifest.upsert_file(
                 item.id,
                 source.item_number,
@@ -126,6 +96,38 @@ class Downloader:
                 source.checksum,
                 source.checksum_algo,
             )
+
+        for source in files:
+            filename = safe_filename(source.filename, f"{item.id}_{source.item_number}")
+            # An assigned path is never recomputed -- that stability is what
+            # lets resume match files across runs.
+            existing = self.manifest.get_file(item.id, source.item_number)
+            if existing is not None:
+                relpath = existing["target_path"]
+                if (
+                    existing["filename"] == filename
+                    and existing["expected_size"] == source.size
+                    and existing["checksum"] == source.checksum
+                    and existing["checksum_algo"] == source.checksum_algo
+                ):
+                    continue  # nothing changed; skip the write
+                upsert(source, filename, relpath)
+                continue
+
+            with self._path_lock:
+                relpath = target_path(
+                    date_folder,
+                    filename,
+                    item.id,
+                    owner_of=lambda p, number=source.item_number: (
+                        self.manifest.path_owner(
+                            p, exclude_media_id=item.id, exclude_item_number=number
+                        )
+                    ),
+                    item_number=source.item_number,
+                    chapter_count=len(files),
+                )
+                upsert(source, filename, relpath)
         return files, None
 
     # -- one physical file -------------------------------------------------
@@ -149,10 +151,7 @@ class Downloader:
         if final.exists():
             actual = final.stat().st_size
             if expected is None or actual == expected:
-                outcome = FileOutcome("done", 0, actual, "already_on_disk")
-                if self.on_file_end and self.on_file_start:
-                    pass
-                return outcome
+                return FileOutcome("done", 0, actual, "already_on_disk")
             log_event(
                 logging.WARNING,
                 "existing_file_size_mismatch",
@@ -166,11 +165,7 @@ class Downloader:
         refreshes = 0
         last_stream_error = ""
         transferred = 0  # bytes actually pulled this run, excluding a resumed .part
-        # NOT `in file_row`: sqlite3.Row membership tests values, not column
-        # names, so the "simplified" form would always be False.
-        etag: str | None = (
-            file_row["checksum"] if "checksum" in file_row.keys() else None  # noqa: SIM118
-        )
+        etag: str | None = file_row["checksum"]
         verifier: EtagVerifier | None = None
         handle = self.on_file_start(relpath, expected) if self.on_file_start else None
         outcome = FileOutcome("failed", 0, 0, "aborted")
@@ -311,7 +306,7 @@ class Downloader:
                 # An expired signature looks like 403 (sometimes 401/410) from
                 # the CDN. That is not our bearer token -- refresh the URL.
                 total = _advertised_total(response, offset)
-                etag = (response.headers.get("ETag") or "").strip('"') or None
+                etag = etag_header(response.headers)
 
                 if status in (401, 403, 410):
                     response.close()

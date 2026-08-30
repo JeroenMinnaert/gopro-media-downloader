@@ -27,6 +27,11 @@ MAX_CANDIDATES = 8
 _ETAG_RE = re.compile(r'^"?([0-9a-f]{32})(?:-(\d+))?"?$')
 
 
+def etag_header(headers) -> str | None:
+    """Unquoted ETag from a response's headers, or None if absent."""
+    return (headers.get("ETag") or "").strip('"') or None
+
+
 def parse_etag(header: str | None) -> tuple[str, int] | None:
     """('<hex>', parts) from an ETag header, or None if it is not one."""
     if not header:

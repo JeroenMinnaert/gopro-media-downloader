@@ -75,23 +75,23 @@ class DownloadProgress:
         self.progress.advance(handle, amount)
         self.progress.advance(self.overall, amount)
 
+    def _update_overall_label(self) -> None:
+        self.progress.update(
+            self.overall,
+            description=f"[bold]Overall[/bold] {self.files_done}/{self.total_files} files",
+        )
+
     def finish_file(self, handle, ok: bool = True) -> None:
         if handle is None:
             return
         with self._lock:
             self.files_done += 1
             self.progress.remove_task(handle)
-            self.progress.update(
-                self.overall,
-                description=f"[bold]Overall[/bold] {self.files_done}/{self.total_files} files",
-            )
+            self._update_overall_label()
 
     def advance_overall(self, files: int = 0, done_bytes: int = 0) -> None:
         with self._lock:
             self.files_done += files
             if done_bytes:
                 self.progress.advance(self.overall, done_bytes)
-            self.progress.update(
-                self.overall,
-                description=f"[bold]Overall[/bold] {self.files_done}/{self.total_files} files",
-            )
+            self._update_overall_label()

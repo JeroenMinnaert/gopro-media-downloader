@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .paths import split_ext
+
 # Everything the user wants backed up. MultiClipEdit is deliberately absent:
 # those are GoPro-generated edits, not originals.
 DEFAULT_TYPES = (
@@ -65,6 +67,11 @@ class MediaItem:
             mce_type=data.get("mce_type"),
             raw=data,
         )
+
+    @classmethod
+    def from_row(cls, row) -> MediaItem:
+        """Reconstruct from a manifest row's stored `raw_json` column."""
+        return cls.from_json(json.loads(row["raw_json"]))
 
     @property
     def raw_json(self) -> str:
@@ -125,10 +132,10 @@ def chapter_filename(base: str, item_number: int) -> str:
     if match:
         prefix, _chapter, number, ext = match.groups()
         return f"{prefix}{item_number:02d}{number}{ext}"
-    stem, _, ext = base.rpartition(".")
+    stem, ext = split_ext(base)
     if not stem:
         return f"{base}_p{item_number:02d}"
-    return f"{stem}_p{item_number:02d}.{ext}"
+    return f"{stem}_p{item_number:02d}{ext}"
 
 
 def parse_download_response(
