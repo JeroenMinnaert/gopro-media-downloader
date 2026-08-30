@@ -128,6 +128,12 @@ def build_parser() -> argparse.ArgumentParser:
         "which many cameras write in the field the spec calls UTC",
     )
     fix.add_argument(
+        "--flatten-to-api",
+        action="store_true",
+        help="write GoPro's timestamp verbatim instead of sliding a folder whose "
+        "camera clock was reset, which preserves the clips' relative times",
+    )
+    fix.add_argument(
         "--keep-mtime",
         action="store_true",
         help="leave file modification times alone (they default to the capture time)",
@@ -650,6 +656,7 @@ def cmd_fix_dates(config: Config, args) -> int:
             dry_run=args.dry_run,
             video_utc=args.video_utc,
             set_mtime=not args.keep_mtime,
+            preserve_spacing=not args.flatten_to_api,
             on_progress=lambda path, was, now: console.print(
                 f"  [dim]{was}[/dim] -> [green]{now}[/green]  {path}"
             ),
@@ -664,6 +671,11 @@ def cmd_fix_dates(config: Config, args) -> int:
         console.print(
             f"  {report.added_tags} photo(s) had no Exif date at all and "
             f"{'would get' if args.dry_run else 'now carry'} one."
+        )
+    if report.shifted:
+        console.print(
+            f"  {report.shifted} clip(s) had a reset camera clock; their folder is "
+            "slid as a whole so the clips keep their order and spacing."
         )
     if report.mtime_only:
         console.print(f"  {report.mtime_only} file(s) needed only their modification time set.")

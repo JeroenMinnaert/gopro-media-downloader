@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .logging_setup import log_event
@@ -54,6 +54,7 @@ class FixReport:
     fixed: list[tuple[str, str, str]] = field(default_factory=list)  # path, was, now
     added_tags: int = 0
     mtime_only: int = 0
+    shifted: int = 0
     already_ok: int = 0
     skipped: list[tuple[str, str]] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
@@ -135,6 +136,54 @@ def _set_mtime(path: Path, utc: datetime) -> bool:
     return True
 
 
+@dataclass
+class _Candidate:
+    """One file that needs repair, and the times it should end up with."""
+
+    row: object
+    rel: str
+    path: Path
+    dates: MediaDates
+    local: datetime
+    utc: datetime
+    folder: str
+    shifted: bool = False
+
+
+def _preserve_spacing(candidates: list[_Candidate], report: FixReport) -> None:
+    """Correct a stopped camera clock by sliding a whole folder, not flattening it.
+
+    A GoPro that loses power resets its clock, so a day's clips come back dated
+    2015-01-01 -- but with the right *relative* times: 02:43, 03:05, 03:10. The
+    API knows the true date, yet reports a single timestamp for every clip in
+    the batch. Writing that verbatim would fix the date and destroy the
+    ordering, collapsing a morning's filming onto one second.
+
+    So when a group's embedded times are distinct, every clip in it moves by the
+    one offset that lands the earliest clip on the API's time. Dates become
+    right and the gaps between clips survive. Groups whose embedded times are
+    already identical carry no ordering to protect and are left to the plain
+    overwrite.
+    """
+    groups: dict[str, list[_Candidate]] = {}
+    for c in candidates:
+        if c.dates.kind == "mp4" and c.dates.primary is not None:
+            groups.setdefault(c.folder, []).append(c)
+
+    for group in groups.values():
+        embedded = [c.dates.primary for c in group]
+        if len(group) < 2 or len(set(embedded)) < 2:
+            continue
+        # The ISO-BMFF fields we rewrite are UTC, so anchor in that domain.
+        offset = min(c.utc.replace(tzinfo=None) for c in group) - min(embedded)
+        for c in group:
+            skew = c.local - c.utc.replace(tzinfo=None)
+            c.utc = (c.dates.primary + offset).replace(tzinfo=UTC)
+            c.local = c.utc.replace(tzinfo=None) + skew
+            c.shifted = True
+        report.shifted += len(group)
+
+
 def fix_dates(
     manifest: Manifest,
     dest: Path,
@@ -146,10 +195,14 @@ def fix_dates(
     dry_run: bool = False,
     video_utc: bool = False,
     set_mtime: bool = True,
+    preserve_spacing: bool = True,
     on_progress=None,
 ) -> FixReport:
     report = FixReport()
+    candidates: list[_Candidate] = []
 
+    # Pass one: read what every file claims. Nothing is written yet, because
+    # deciding a clock-reset group's new times needs the whole group first.
     for row in manifest.files_for_date_fix(since=since, until=until, limit=limit):
         rel = row["target_path"]
         path = dest / rel
@@ -166,7 +219,6 @@ def fix_dates(
             report.skipped.append((rel, f"no usable captured_at: {exc}"))
             continue
 
-        touched_mtime = False
         try:
             dates = read_dates(path)
         except UnsupportedMedia as exc:
@@ -196,43 +248,50 @@ def fix_dates(
                 report.already_ok += 1
             continue
 
-        was = _describe(dates)
-        now = local.strftime("%Y-%m-%d %H:%M:%S")
+        candidates.append(_Candidate(row, rel, path, dates, local, utc, row["date_folder"]))
+
+    if preserve_spacing:
+        _preserve_spacing(candidates, report)
+
+    # Pass two: write.
+    for c in candidates:
+        was = _describe(c.dates)
+        now = c.local.strftime("%Y-%m-%d %H:%M:%S")
         if dry_run:
-            report.fixed.append((rel, was, now))
-            if dates.can_add:
+            report.fixed.append((c.rel, was, now))
+            if c.dates.can_add:
                 report.added_tags += 1
             if on_progress:
-                on_progress(rel, was, now)
+                on_progress(c.rel, was, now)
             continue
 
         try:
-            result = apply_dates(path, local, utc, dates)
+            result = apply_dates(c.path, c.local, c.utc, c.dates)
         except (MalformedMedia, OSError, ValueError) as exc:
-            report.failed.append((rel, f"could not write dates: {exc}"))
+            report.failed.append((c.rel, f"could not write dates: {exc}"))
             continue
         if not result.written:
-            report.skipped.append((rel, "no field could be rewritten in place"))
+            report.skipped.append((c.rel, "no field could be rewritten in place"))
             continue
 
         if result.rebuilt:
             report.added_tags += 1
-        _rebase_integrity(manifest, row, path, changed_size=result.size)
-        if set_mtime:
-            touched_mtime = _set_mtime(path, utc)
-        report.fixed.append((rel, was, now))
+        _rebase_integrity(manifest, c.row, c.path, changed_size=result.size)
+        touched_mtime = _set_mtime(c.path, c.utc) if set_mtime else False
+        report.fixed.append((c.rel, was, now))
         log_event(
             logging.INFO,
             "dates_fixed",
-            path=rel,
+            path=c.rel,
             was=was,
             now=now,
             fields=",".join(result.written),
             rebuilt=result.rebuilt,
+            shifted=c.shifted,
             mtime=touched_mtime,
         )
         if on_progress:
-            on_progress(rel, was, now)
+            on_progress(c.rel, was, now)
 
     return report
 

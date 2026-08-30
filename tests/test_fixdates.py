@@ -201,3 +201,79 @@ def test_the_fallback_timezone_is_the_one_the_sync_used(manifest, tmp_path):
     path = seed(manifest, tmp_path, "IMG_0011.jpg", make_jpeg(), tz=None)
     fix_dates(manifest, tmp_path, fallback_timezone=parse_timezone("Europe/Brussels"))
     assert read_dates(path).primary == LOCAL
+
+
+def _seed_clip(manifest, dest, name, embedded, media_id, captured_at=CAPTURED_AT):
+    item = make_item(
+        media_id, filename=name, captured_at=captured_at, captured_at_timezone="Europe/Brussels"
+    )
+    manifest.upsert_item(item, FOLDER)
+    rel = f"{FOLDER}/{name}"
+    path = dest / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(make_mp4(embedded))
+    manifest.upsert_file(media_id, 1, name, rel, path.stat().st_size)
+    manifest.mark_done(manifest.get_file(media_id, 1)["id"], path.stat().st_size)
+    return path
+
+
+def test_a_reset_camera_clock_slides_the_folder_instead_of_flattening_it(manifest, tmp_path):
+    # A GoPro that lost power dates a whole morning 2015-01-01, but the clips'
+    # relative times are still right. The API knows the date and reports one
+    # timestamp for all of them, so writing it verbatim would collapse the
+    # ordering.
+    clips = [
+        ("GX010001.MP4", datetime(2015, 1, 1, 2, 43, 0)),
+        ("GX010002.MP4", datetime(2015, 1, 1, 3, 5, 0)),
+        ("GX010003.MP4", datetime(2015, 1, 1, 4, 13, 0)),
+    ]
+    paths = [
+        _seed_clip(manifest, tmp_path, name, when, f"clip{n}")
+        for n, (name, when) in enumerate(clips)
+    ]
+
+    report = fix_dates(manifest, tmp_path)
+
+    assert report.shifted == 3 and len(report.fixed) == 3
+    now = [read_dates(p).primary for p in paths]
+    # The earliest clip lands on GoPro's time...
+    assert now[0] == datetime(2023, 7, 14, 22, 30)
+    # ...and the gaps between clips are exactly what they were.
+    assert now[1] - now[0] == datetime(2015, 1, 1, 3, 5) - datetime(2015, 1, 1, 2, 43)
+    assert now[2] - now[1] == datetime(2015, 1, 1, 4, 13) - datetime(2015, 1, 1, 3, 5)
+    assert len(set(now)) == 3
+
+
+def test_flattening_can_be_asked_for_explicitly(manifest, tmp_path):
+    paths = [
+        _seed_clip(manifest, tmp_path, f"GX01000{n}.MP4", datetime(2015, 1, 1, 2, 40 + n), f"c{n}")
+        for n in range(3)
+    ]
+
+    report = fix_dates(manifest, tmp_path, preserve_spacing=False)
+
+    assert report.shifted == 0
+    assert {read_dates(p).primary for p in paths} == {datetime(2023, 7, 14, 22, 30)}
+
+
+def test_a_batch_that_already_shares_one_timestamp_has_no_spacing_to_keep(manifest, tmp_path):
+    # The other real shape: every clip carries the same stale value, so there
+    # is no ordering to protect and the API's timestamp is written as-is.
+    same = datetime(2015, 1, 1, 2, 43, 0)
+    paths = [
+        _seed_clip(manifest, tmp_path, f"GX01000{n}.MP4", same, f"d{n}") for n in range(3)
+    ]
+
+    report = fix_dates(manifest, tmp_path)
+
+    assert report.shifted == 0
+    assert {read_dates(p).primary for p in paths} == {datetime(2023, 7, 14, 22, 30)}
+
+
+def test_a_lone_clip_is_not_treated_as_a_group(manifest, tmp_path):
+    path = _seed_clip(manifest, tmp_path, "GX010009.MP4", datetime(2015, 1, 1, 2, 43), "solo")
+
+    report = fix_dates(manifest, tmp_path)
+
+    assert report.shifted == 0
+    assert read_dates(path).primary == datetime(2023, 7, 14, 22, 30)
