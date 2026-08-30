@@ -1,0 +1,333 @@
+# gopro-media-downloader
+
+Downloads your entire GoPro Plus cloud library in **original quality**, into flat
+`YYYY-MM-DD/` folders named by **capture date**, resumably — built for a
+multi-hour, multi-terabyte backup run straight to a NAS.
+
+The GoPro website caps bulk downloads and hands you transcodes. This talks to
+the same API the website uses, picks the `source` variation (the original file
+off the camera), verifies every file against the origin's own checksum, and
+keeps a manifest so an interrupted run picks up exactly where it stopped.
+
+Proven on a real library: 1,217 items / 1.4 TiB, including 22 chaptered
+recordings and a 4-chapter 13.6 GiB clip.
+
+```
+downloads/
+├── 2023-07-14/
+│   ├── GX010123.MP4
+│   └── GOPR0456.JPG
+├── 2023-07-15/
+│   └── GX010124.MP4
+└── .gopro-dl/          # manifest.db + run logs (exclude from your NAS copy)
+```
+
+## Install
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e .
+.venv/bin/gopro-dl --help
+```
+
+## Get your token
+
+There is deliberately **no login flow** — GoPro's sign-in involves OAuth and
+CAPTCHAs. You paste a bearer token instead. It expires after a while, which the
+tool handles mid-run without losing progress (see below).
+
+1. Open <https://gopro.com/media-library/> in Chrome and log in.
+2. Open DevTools (`Cmd+Option+I`) → **Application** tab → **Storage → Cookies →
+   `https://gopro.com`**.
+3. Find the cookie named **`gp_access_token`** and copy its full **Value** — a
+   long JWT starting `eyJ...`.
+4. Save it, readable only by you:
+
+   ```bash
+   umask 077 && echo 'eyJ...' > ~/.gopro-token
+   ```
+
+5. Check it:
+
+   ```bash
+   .venv/bin/gopro-dl token --check --token-file ~/.gopro-token
+   ```
+
+**Alternative (Network tab):** DevTools → **Network** → filter `api.gopro.com` →
+reload the page → click any `media/search` request → **Headers** → Request
+Headers → copy everything after `Authorization: Bearer `.
+
+Use `--token-file` rather than `--token` for long runs: the file can be updated
+while the downloader is running.
+
+## Usage
+
+Put your settings in `.env` (copy `.env.example`) and every command becomes a
+one-liner. Otherwise pass `--dest`, `--token-file` and `--timezone` explicitly.
+
+```bash
+# Plan only -- builds the full manifest, downloads nothing
+gopro-dl sync --dry-run
+
+# Smoke test before committing to the whole library
+gopro-dl sync --limit 5
+
+# The real run: safe to Ctrl-C and restart at any point
+gopro-dl sync
+
+# Unattended: polls the token file instead of prompting when the token expires
+nohup gopro-dl sync --non-interactive --quiet > ~/gopro-sync.log 2>&1 &
+```
+
+```bash
+gopro-dl status                 # counts, bytes and integrity state
+gopro-dl report --failed-only   # what failed and why
+gopro-dl report --csv out.csv   # full per-file detail
+gopro-dl verify                 # re-check sizes of everything marked done
+gopro-dl verify --deep          # re-hash and compare against the origin ETag
+gopro-dl verify --deep --fix    # ... and re-queue anything that fails
+gopro-dl backfill-etags         # fetch checksums for files downloaded earlier
+gopro-dl retry                  # reset failed files, then sync again
+gopro-dl token --check          # is the current token still valid?
+```
+
+A first Ctrl-C stops after the current chunks and keeps every `.part` file;
+re-running resumes from the exact byte. It can take up to a minute to take
+effect, because a worker may be blocked on a socket read — press it again to
+stop immediately (still safe: partial files and the manifest survive).
+
+Useful flags: `--timezone Europe/Brussels`, `--since 2022-01-01`,
+`--until 2022-12-31`, `--types Video,Photo`,
+`--concurrency 3` (max 8), `--limit N`, `--retry-failed`, `--quiet`,
+`--non-interactive`, `--no-manifest-refresh`.
+
+Settings can also live in `.env` (copy `.env.example`). Precedence is
+flag → environment → `.env` → default.
+
+## When the token expires mid-run
+
+Expected on a run this long. The download pauses, every worker parks, and you
+get a prompt:
+
+```
+GoPro token expired or rejected.
+  1. Open https://gopro.com/media-library/ in Chrome (log in if needed)
+  2. DevTools -> Application -> Cookies -> gopro.com -> gp_access_token
+  3. Copy the value into /Users/you/.gopro-token
+Press Enter once updated, paste a token directly, or Ctrl-C to stop:
+```
+
+Overwrite the token file, press Enter, and the run continues from the exact byte
+it reached. Nothing is re-downloaded. With `--non-interactive` it polls the
+token file instead of prompting, which suits `nohup`/`screen` runs.
+
+Note that a **403 from GoPro's CDN is not** token expiry — signed media URLs are
+time-limited and routinely expire mid-file. Those are refreshed silently and
+never interrupt you.
+
+## How it stays safe on a multi-terabyte run
+
+- **Manifest first.** The whole library is enumerated into
+  `<dest>/.gopro-dl/manifest.db` before anything downloads, so the tool always
+  knows the full picture and can report progress meaningfully.
+- **Resume at two levels.** A correctly sized file already on disk is skipped
+  outright; a partial `.part` file resumes via HTTP `Range`. Servers that ignore
+  `Range` and reply `200` are detected and restarted cleanly rather than
+  appending into a corrupt file.
+- **Verify before finalise.** Bytes land in `file.MP4.part` and are only renamed
+  to `file.MP4` after the size matches. A final-named file is never partial.
+- **Chaptered recordings** (one media item, several `GX01/GX02/...` files) are
+  tracked per physical file, so a long recording resumes chapter by chapter.
+- **Circuit breaker.** If most requests start failing systemically, the run
+  pauses and probes instead of marking thousands of files failed.
+- **Politeness.** 3 concurrent downloads by default, exponential backoff with
+  jitter, and `Retry-After` is honoured on 429s.
+- **Content verified against the origin.** See [File integrity](#file-integrity).
+- **Pre-flight.** Token validity, destination writability, and free space are
+  checked before the first byte. The space check is sized to what *this* run
+  will fetch, so `--dry-run` and `--limit`/`--since` runs still work on a
+  scratch disk smaller than the whole library.
+- **Ctrl-C is safe.** First press finishes current chunks and flushes state;
+  partial files are kept. Re-run `sync` to continue.
+
+### Filename collisions
+
+Two different clips can share a filename on the same date. The second one gets
+its media id appended (`GX010123_a1b2c3.MP4`). The suffix comes from the
+immutable media id and the assignment is recorded in the manifest, so a file
+always lands at the same path on every future run — which is what keeps resume
+matching. Which of two colliding clips takes the plain name depends on which is
+resolved first; once assigned, it never changes.
+
+## File integrity
+
+Every downloaded file is verified two ways.
+
+**Size** — the listing's `file_size` is the baseline. For a chaptered recording
+it is the sum across chapters, and the per-chapter sizes come from the response
+headers. A file is only renamed from `.part` to its final name once the byte
+count matches, so a final-named file is never partial. An item-level check also
+confirms the chapters sum to the listed total, which catches a whole chapter
+going missing — each individual file can verify fine while the recording is
+incomplete.
+
+**Content** — GoPro's API exposes no checksum of any kind, but their CDN is S3
+behind CloudFront, and the `ETag` header is an origin-side content hash. Files
+are hashed *while streaming*, which costs nothing because the bytes are already
+passing through, and compared against that ETag. A mismatch fails the file and
+deletes it, so the next run re-fetches it.
+
+### How the ETag works
+
+An S3 multipart ETag is **not** the MD5 of the file:
+
+```
+etag = md5(concat of each part's raw md5 digest) + "-" + <part count>
+```
+
+A single-part object is therefore `md5(md5_raw(file))-1`. Verified against a
+real file:
+
+```
+S3 etag        : 1955982c4db2859ebaee6bb5885e7e8d-1
+md5(file)      : faaf8b8e2ad35c0dad129d1201089078   wrong
+md5(md5(file)) : 1955982c4db2859ebaee6bb5885e7e8d   correct
+```
+
+S3 does not publish the part size, and it varies per file (100 MiB and 20 MiB
+both appear in one library). The part count constrains it: for N parts covering
+`total` bytes, `(N-1)*S < total <= N*S`. Uploaders use round sizes, so the MiB
+multiples in that window are the realistic candidates — usually one, sometimes
+a few. The downloader hashes against **every** candidate at once.
+
+That makes the verdict honest in both directions:
+
+| outcome | meaning |
+|---|---|
+| a candidate matches | conclusive proof the bytes match the origin |
+| no match, one candidate | real corruption — the file is failed and refetched |
+| no match, several candidates | reported `unverified`, never as corruption |
+
+Resumed downloads cannot be hashed from byte zero, so they are recorded as
+`unverified` and confirmed later by `verify --deep`.
+
+```bash
+gopro-dl status                # counts by integrity state
+gopro-dl backfill-etags        # fetch checksums for files downloaded earlier
+gopro-dl verify --deep         # re-read from disk and check against the origin
+```
+
+`backfill-etags` costs one API call per item plus one HEAD per file and
+transfers no media, so it is cheap to run. `verify --deep` re-reads everything,
+which is bounded by your link (roughly 4 hours for 1.4 TiB over gigabit) — run
+it once at the end, not during a download, or the two compete for bandwidth.
+
+## Downloading straight to a NAS
+
+Media can be written directly to an SMB mount, but **keep the manifest on the
+local disk** with `--manifest-dir`:
+
+```bash
+gopro-dl sync \
+  --dest /Volumes/GoPro \
+  --manifest-dir ~/gopro-backup/.gopro-dl \
+  --token-file ~/.gopro-token \
+  --timezone Europe/Brussels
+```
+
+SMB silently refuses SQLite's WAL journal (it degrades to `journal_mode=delete`)
+and network file locking is unreliable, so a manifest on the share risks
+`database is locked` errors or corruption. Media files themselves are fine:
+chunked writes, `fsync`, atomic `os.replace` and seek/truncate resume were all
+verified working over SMB.
+
+Note also that macOS smbfs truncates `statvfs` block counts to 32 bits, so any
+SMB volume over 4 TiB under-reports its free space by exactly 2**32 blocks
+through `shutil.disk_usage`. The pre-flight check reads `df` instead, so a large
+share is measured correctly rather than wrongly refused.
+
+Put these settings in `.env` so you can just run `gopro-dl sync`.
+
+If you would rather stage locally and copy afterwards:
+
+```bash
+rsync -a --progress /local/gopro/ /Volumes/Downloads/gopro-backup/
+```
+
+Run `gopro-dl verify` before and after any copy.
+
+### If the destination is smaller than the library
+
+Pre-flight refuses to start a run that cannot fit (exit code 1). Work through
+the library in date ranges instead, copying each batch off before the next:
+
+```bash
+gopro-dl sync --until 2019-12-31          # oldest batch
+# ... move/archive that batch elsewhere, then:
+gopro-dl sync --since 2020-01-01 --until 2022-12-31
+```
+
+The manifest tracks what is already done, so batches never overlap and nothing
+is fetched twice.
+
+## API notes (things that will bite you)
+
+Established by inspecting a real account. Each of these caused a bug that
+looked like success:
+
+1. **`_embedded.files` is a trap.** For videos it points at
+   `high_res_proxy_mp4` — a 1080p transcode at roughly half the bytes of the
+   original — while for photos it points at the real source, so it looks
+   plausible. Only `variations[label == "source"]` is trustworthy. Downloading
+   the proxy produces complete, valid, *wrong* files.
+
+2. **Chapters share the label `"source"`.** A long recording exposes several
+   variations all labelled `source`, distinguished only by the trailing number
+   in the URL path (`/source/default/1.mp4`, `2.mp4`, …). Taking the first
+   match silently discards the rest of the recording.
+
+3. **The listing `file_size` is the sum across chapters**, and it is exact —
+   it matched the summed chapter sizes byte-for-byte on every chaptered item
+   tested. The individual variations carry no size at all.
+
+4. **`captured_at_timezone` is essentially always absent** (1,216 of 1,217
+   items). Without `--timezone`, folder dates fall back to UTC and evening
+   clips land in the previous day. DST is applied per clip.
+
+5. **No checksums anywhere in the API** — not in the listing, the download
+   response, or any variation. The CDN's `ETag` is the only content hash
+   available.
+
+6. **`MultiClipEdit` items** are GoPro-generated edits, not originals. They are
+   excluded from the request and defensively filtered again on the response.
+
+### macOS + SMB notes
+
+1. **SQLite WAL is silently unavailable on SMB** — it degrades to
+   `journal_mode=delete`, and network file locking is unreliable. Keep the
+   manifest on a local disk with `--manifest-dir`.
+2. **statvfs truncates to 32 bits on smbfs**, so `shutil.disk_usage`
+   under-reports any share over 4 TiB by exactly 2**32 blocks. Pre-flight reads
+   `df` instead, or it would refuse a destination with terabytes free.
+3. **WiFi halves your throughput** on a download-to-NAS run, because every byte
+   crosses the air twice (CDN → Mac, Mac → NAS) on a half-duplex medium.
+   Measured 32.5 MiB/s over 802.11ax vs 75 MiB/s over gigabit ethernet — 2.3x.
+
+## Development
+
+```bash
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/python -m pytest -q
+```
+
+84 tests, all against mocked API responses — no network and no token needed.
+They cover pagination, source-variation selection (including the proxy trap and
+multi-chapter fan-out), capture-date foldering and DST boundaries, collision
+stability, manifest idempotency, the resume state machine
+(206 / ignored-Range 200 / 416 / expired signed URL / mid-stream interrupt),
+S3 ETag verification, the token-expiry pause, the circuit breaker, disk-space
+edge cases, and ETag backfill.
+
+Several encode bugs found in live testing, with the real-world values that
+exposed them — the proxy-vs-source sizes, the 39-part and 192-part ETags, and
+the smbfs 2**32 truncation — so a regression would be caught immediately.

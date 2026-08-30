@@ -1,0 +1,13 @@
+{
+  "_pages": {"current_page": 1, "per_page": 2, "total_items": 4, "total_pages": 2},
+  "_embedded": {
+    "media": [
+      {"id": "aaa111", "type": "Video", "filename": "GX010001.MP4",
+       "captured_at": "2023-07-14T22:30:00Z", "captured_at_timezone": "Europe/Brussels",
+       "file_size": 1048576, "item_count": 1, "camera_model": "HERO11 Black"},
+      {"id": "bbb222", "type": "Photo", "filename": "GOPR0002.JPG",
+       "captured_at": "2024-01-02T09:15:00Z", "captured_at_timezone": "+01:00",
+       "file_size": 4096, "item_count": 1, "camera_model": "HERO11 Black"}
+    ]
+  }
+}

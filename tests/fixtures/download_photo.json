@@ -1,0 +1,12 @@
+{
+  "filename": "GOPR0002.JPG",
+  "_embedded": {
+    "files": [
+      {"item_number": 1, "url": "https://media-cdn-vod.gopro.test/user/1234567890123456789/source/default/1.jpg", "available": true}
+    ],
+    "variations": [
+      {"label": "source", "url": "https://media-cdn-vod.gopro.test/user/1234567890123456789/source/default/1.jpg", "type": "jpg"}
+    ],
+    "sprites": [], "sidecar_files": []
+  }
+}

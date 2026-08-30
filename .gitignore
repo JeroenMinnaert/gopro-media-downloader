@@ -1,0 +1,23 @@
+# Secrets -- never commit a token
+.env
+*.token
+.gopro-token
+
+# Local state / media
+.gopro-dl/
+downloads/
+*.db
+*.db-wal
+*.db-shm
+*.part
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+dist/
+build/

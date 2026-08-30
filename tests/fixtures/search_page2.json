@@ -1,0 +1,30 @@
+{
+  "_pages": {
+    "current_page": 2,
+    "per_page": 2,
+    "total_items": 4,
+    "total_pages": 2
+  },
+  "_embedded": {
+    "media": [
+      {
+        "id": "ccc333",
+        "type": "MultiClipEdit",
+        "filename": "MyEdit.MP4",
+        "captured_at": "2024-02-01T10:00:00Z",
+        "mce_type": "MultiClipEdit",
+        "file_size": 999,
+        "item_count": 1
+      },
+      {
+        "id": "ddd444",
+        "type": "Video",
+        "filename": "GX010001.MP4",
+        "captured_at": "2023-07-14T23:00:00Z",
+        "captured_at_timezone": "Europe/Brussels",
+        "file_size": 2100,
+        "item_count": 3
+      }
+    ]
+  }
+}

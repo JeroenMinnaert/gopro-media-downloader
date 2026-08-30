@@ -1,0 +1,16 @@
+{
+  "filename": "GX010001.MP4",
+  "_embedded": {
+    "files": [
+      {"item_number": 1, "url": "https://media-cdn-vod.gopro.test/user/1234567890123456789/high_res_proxy_mp4/default/1.mp4",
+       "head": "https://media-cdn-vod.gopro.test/user/1234567890123456789/high_res_proxy_mp4/default/1.mp4", "available": true}
+    ],
+    "variations": [
+      {"label": "source", "url": "https://media-cdn-vod.gopro.test/user/1234567890123456789/source/default/1.mp4", "type": "mp4", "quality": "2160p"},
+      {"label": "source", "url": "https://media-cdn-vod.gopro.test/user/1234567890123456789/source/default/2.mp4", "type": "mp4", "quality": "2160p"},
+      {"label": "source", "url": "https://media-cdn-vod.gopro.test/user/1234567890123456789/source/default/3.mp4", "type": "mp4", "quality": "2160p"},
+      {"label": "high_res_proxy_mp4", "url": "https://media-cdn-vod.gopro.test/user/1234567890123456789/high_res_proxy_mp4/default/1.mp4", "type": "mp4"}
+    ],
+    "sprites": [], "sidecar_files": []
+  }
+}
