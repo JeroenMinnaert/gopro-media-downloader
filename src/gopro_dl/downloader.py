@@ -54,6 +54,25 @@ class StreamResult:
     verifier: EtagVerifier | None = None
 
 
+# GoPro re-muxes some uploads server-side without updating the listing's
+# file_size, leaving it a few KB off what the origin actually stores. That drift
+# is minuscule next to a truncated transfer or a lost chapter, so a tight
+# tolerance tells the two apart: metadata noise yields to the origin, real data
+# loss still fails.
+# Observed drift is ~3 KB on files of 20-100 MB (0.003-0.02%); truncation and
+# lost chapters are whole fractions of the file. The bound is deliberately
+# relative, with no absolute floor -- a flat allowance would swallow the total
+# loss of a small file.
+DRIFT_FRACTION = 0.001
+
+
+def within_listing_drift(listed: int, actual: int) -> bool:
+    """True when listed vs actual is stale metadata rather than missing data."""
+    if listed <= 0:
+        return False
+    return abs(actual - listed) <= listed * DRIFT_FRACTION
+
+
 class Downloader:
     def __init__(
         self,
@@ -198,6 +217,25 @@ class Downloader:
                         log_event(
                             logging.DEBUG, "size_learned", path=relpath, expected=expected
                         )
+                    elif (
+                        advertised
+                        and expected is not None
+                        and advertised != expected
+                        and within_listing_drift(expected, advertised)
+                    ):
+                        # Stale listing metadata: the origin is what actually
+                        # exists, so it wins. Without this the file fails
+                        # identically on every retry, forever. A larger
+                        # disagreement is left alone and still fails below --
+                        # that is a truncated transfer, not metadata drift.
+                        log_event(
+                            logging.WARNING,
+                            "listing_size_stale",
+                            path=relpath,
+                            listed=expected,
+                            origin=advertised,
+                        )
+                        expected = advertised
                     if written is not None:
                         transferred += written
                         break
@@ -364,7 +402,7 @@ class Downloader:
             # A dropped connection mid-stream leaves a valid .part; resuming
             # from its offset is the whole point of writing it incrementally.
             log_event(logging.WARNING, "stream_interrupted", path=relpath, error=str(exc))
-            return StreamResult(None, str(exc)), None
+            return StreamResult(None, str(exc))
 
 
 def _advertised_total(response: httpx.Response, offset: int) -> int | None:

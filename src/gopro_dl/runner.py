@@ -19,7 +19,7 @@ from rich.console import Console
 from .api import ApiError, AuthExpired, GoProClient
 from .auth import AuthGate, TokenProvider, refresh_token_interactively
 from .config import Config
-from .downloader import Downloader, FileOutcome, ShuttingDown
+from .downloader import Downloader, FileOutcome, ShuttingDown, within_listing_drift
 from .logging_setup import log_event
 from .manifest import Manifest
 from .models import MediaItem
@@ -188,9 +188,25 @@ class DownloadRunner:
 
         This is the safety net that catches a whole chapter going missing --
         each individual file can verify fine while the recording is incomplete.
+
+        The listing size is not always truthful: GoPro re-muxes some uploads
+        server-side without updating file_size, which leaves it a few KB off
+        what the origin actually stores. A missing chapter is orders of
+        magnitude larger than that drift, so a small shortfall is reported and
+        tolerated while anything bigger still fails the item.
         """
         on_disk, listed = self.manifest.item_byte_total(item.id)
         if not listed or not on_disk or on_disk == listed:
+            return
+        if within_listing_drift(listed, on_disk):
+            log_event(
+                logging.WARNING,
+                "item_total_listing_drift",
+                media_id=item.id,
+                filename=item.filename,
+                on_disk=on_disk,
+                listed=listed,
+            )
             return
         message = f"item total {on_disk} != listed {listed}"
         with self._stats_lock:
