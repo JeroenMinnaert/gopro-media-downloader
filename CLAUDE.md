@@ -35,11 +35,14 @@ Local dev: the checked-in `.envrc` sets `GOPRO_DL_HOME=$PWD/.dev-state`
 inside the repo instead of your real `~/Library/Application Support`. With
 direnv installed and hooked into your shell, `direnv allow` once and it's
 automatic; without direnv, `locations.py: _read_envrc_home()` reads that
-same line itself (a plain-text match, not real shell evaluation) as a
+same line itself (via `dotenv_values`, not real shell evaluation) as a
 fallback, walking up from cwd to find it. Comment the line out (or run from
 outside the repo) to get the real OS locations instead -- there's no
 install-type detection anywhere in the code; `GOPRO_DL_HOME` is the only
-thing that ever decides this.
+thing that ever decides this. A `.envrc` is only honored if it's owned by
+the current user and not group/world-writable (`_envrc_is_trustworthy()`)
+-- otherwise another local user on a shared machine could plant one above
+your cwd and redirect your token/cookies into a directory they control.
 
 Tests are fully mocked (respx for HTTP) — no network access or real GoPro
 token needed to run the suite. Fixtures live in `tests/fixtures/`.

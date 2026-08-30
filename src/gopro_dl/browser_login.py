@@ -104,17 +104,7 @@ def fetch_cached(profile_dir: Path) -> str | None:
         return None
 
 
-def login(console, profile_dir: Path, timeout_seconds: float = 300.0) -> str | None:
-    """Open a visible browser window at the GoPro login page and wait for it.
-
-    Polls the persisted profile's cookies until `gp_access_token` shows up,
-    the window is closed, or `timeout_seconds` elapses (default 5 minutes).
-    Installs Chromium itself (via `playwright install chromium`) the first
-    time it's needed. Like `fetch_cached`, this never raises: if that install
-    fails, it prints why and returns None -- callers treat it the same as a
-    cancelled or timed-out login.
-    """
-    _ensure_profile_dir(profile_dir)
+def _run_login(console, profile_dir: Path, timeout_seconds: float) -> str | None:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
@@ -150,3 +140,23 @@ def login(console, profile_dir: Path, timeout_seconds: float = 300.0) -> str | N
         if token is None:
             log_event(logging.INFO, "browser_login_no_cookie")
         return token
+
+
+def login(console, profile_dir: Path, timeout_seconds: float = 300.0) -> str | None:
+    """Open a visible browser window at the GoPro login page and wait for it.
+
+    Polls the persisted profile's cookies until `gp_access_token` shows up,
+    the window is closed, or `timeout_seconds` elapses (default 5 minutes).
+    Installs Chromium itself (via `playwright install chromium`) the first
+    time it's needed. Like `fetch_cached`, this never raises: any failure
+    (a locked profile, a Playwright/Chromium mismatch, a network hiccup
+    loading the login page) prints why and returns None -- callers treat
+    that the same as a cancelled or timed-out login.
+    """
+    _ensure_profile_dir(profile_dir)
+    try:
+        return _run_login(console, profile_dir, timeout_seconds)
+    except Exception as exc:
+        log_event(logging.WARNING, "browser_login_failed", error=str(exc))
+        console.print(f"[yellow]Browser login failed: {exc}[/yellow]")
+        return None

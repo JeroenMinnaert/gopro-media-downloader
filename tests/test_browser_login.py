@@ -196,3 +196,26 @@ def test_login_returns_none_when_the_window_is_closed(tmp_path, monkeypatch):
     _patch_playwright(monkeypatch, FakeChromium(context=context))
 
     assert login(FakeConsole(), tmp_path / "profile") is None
+
+
+def test_login_never_raises_on_an_unrelated_launch_failure(tmp_path, monkeypatch):
+    # A locked profile dir, a Playwright/Chromium version mismatch, or any
+    # other unexpected launch failure must degrade to None, like a
+    # cancelled login -- never crash the caller.
+    _patch_playwright(monkeypatch, FakeChromium(raise_exc=RuntimeError("profile dir is locked")))
+    assert login(FakeConsole(), tmp_path / "profile") is None
+
+
+def test_login_never_raises_when_goto_fails(tmp_path, monkeypatch):
+    class BrokenPage(FakePage):
+        def goto(self, url):
+            raise RuntimeError("network is down")
+
+    class BrokenContext(FakeContext):
+        def new_page(self):
+            page = BrokenPage()
+            self.pages.append(page)
+            return page
+
+    _patch_playwright(monkeypatch, FakeChromium(context=BrokenContext()))
+    assert login(FakeConsole(), tmp_path / "profile") is None

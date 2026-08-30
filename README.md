@@ -83,7 +83,9 @@ Both the token and that browser login live under the OS's standard per-app
 location instead of loose dotfiles in your home directory — on macOS that's
 `~/Library/Application Support/gopro-dl/` (`token` and `browser-profile/`,
 `chmod 600`/`700`); on Linux it's `~/.config/gopro-dl/token` and
-`~/.local/share/gopro-dl/browser-profile/`. This is separate from
+`~/.config/gopro-dl/browser-profile/` (one root holds everything: token,
+config file, browser profile, and NAS-redirected manifests alike). This is
+separate from
 `<dest>/.gopro-dl/`, which is per-destination and colocated with the media on
 purpose (see below) — the two are unrelated. Most future runs — including
 re-running `setup` and the mid-run token-expiry prompt below — find a
@@ -310,7 +312,7 @@ live there**, and `gopro-dl` handles that itself: if `--dest` is detected as a
 network mount and you haven't passed `--manifest-dir`, it automatically keeps
 the manifest and logs on local disk instead, under
 `~/Library/Application Support/gopro-dl/manifests/<name>-<hash>/` (macOS) /
-`~/.local/share/gopro-dl/manifests/<name>-<hash>/` (Linux) — keyed by the
+`~/.config/gopro-dl/manifests/<name>-<hash>/` (Linux) — keyed by the
 destination path, so re-running against the same NAS folder finds it again.
 You'll see a one-line notice when this kicks in:
 

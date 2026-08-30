@@ -22,11 +22,28 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat as stat_module
 from dataclasses import dataclass
 from pathlib import Path
 
 import platformdirs
 from dotenv import dotenv_values
+
+
+def _envrc_is_trustworthy(envrc: Path) -> bool:
+    """Refuse to honor a `.envrc` we don't own or that others can write to.
+
+    Without this, another local user on a shared machine could plant a
+    `.envrc` somewhere above your cwd and redirect your token, config, and
+    browser-login cookies into a directory they control.
+    """
+    try:
+        st = envrc.stat()
+    except OSError:
+        return False
+    if hasattr(os, "getuid") and st.st_uid != os.getuid():
+        return False
+    return not st.st_mode & (stat_module.S_IWGRP | stat_module.S_IWOTH)
 
 
 def _read_envrc_home(start: Path) -> str | None:
@@ -42,12 +59,15 @@ def _read_envrc_home(start: Path) -> str | None:
     to). Anything fancier in a real `.envrc` (conditionals, other
     expansions) isn't understood -- stops at the first `.envrc` found
     either way, matching or not, since that's the one that actually
-    applies to `start`.
+    applies to `start`. A `.envrc` we don't own, or that others can write
+    to, is never honored (see `_envrc_is_trustworthy`).
     """
     for candidate in (start, *start.parents):
         envrc = candidate / ".envrc"
         if not envrc.is_file():
             continue
+        if not _envrc_is_trustworthy(envrc):
+            return None
         try:
             value = dotenv_values(envrc, interpolate=False).get("GOPRO_DL_HOME")
         except OSError:

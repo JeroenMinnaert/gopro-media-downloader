@@ -49,6 +49,15 @@ def test_a_commented_out_line_is_ignored(tmp_path):
     assert _read_envrc_home(tmp_path) is None
 
 
+def test_a_world_writable_envrc_is_not_trusted(tmp_path):
+    # Otherwise another local user on a shared machine could plant a .envrc
+    # above your cwd and redirect your token/cookies into their own directory.
+    envrc = tmp_path / ".envrc"
+    envrc.write_text("export GOPRO_DL_HOME=/should-not-be-used\n")
+    envrc.chmod(0o666)
+    assert _read_envrc_home(tmp_path) is None
+
+
 def test_no_envrc_anywhere_returns_none(tmp_path):
     assert _read_envrc_home(tmp_path) is None
 
