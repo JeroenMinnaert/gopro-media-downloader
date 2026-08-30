@@ -109,8 +109,13 @@ whole suite passes first.
 8. **`circuit.py`** (`CircuitBreaker`) — opens when most recent operations
    fail for systemic reasons, so an outage pauses+probes instead of marking
    thousands of files failed.
-9. **`cli.py`** — argparse subcommands (`sync`, `status`, `report`, `verify`,
-   `retry`, `backfill-etags`, `token`) wiring the above together.
+9. **`mediadates.py`** / **`fixdates.py`** — the `fix-dates` command: byte-level
+   reading and repair of the capture dates *inside* JPEG and MP4 files, driven
+   by the manifest's `captured_at`. `mediadates.py` is the container work
+   (pure functions over bytes plus thin file I/O); `fixdates.py` is the
+   orchestration, modelled on `backfill.py`. No API calls.
+10. **`cli.py`** — argparse subcommands (`sync`, `status`, `report`, `verify`,
+   `retry`, `backfill-etags`, `fix-dates`, `token`) wiring the above together.
 
 ### Concurrency model
 
@@ -147,6 +152,29 @@ this ordering is load-bearing for not losing work.
   the commands that actually open the manifest (`cli.py: build_parser()`'s
   `needs_manifest` flag, set per-subcommand via `common()`); fails open
   (assumes local) on any detection error.
+- `fix-dates` is the one place that edits media after download, and the
+  distinction between the two containers is load-bearing. **JPEGs are rebuilt**
+  (splice a new APP1 in, copy every other byte through, temp file + atomic
+  rename) because the common defect is a *missing* `DateTimeOriginal`, not a
+  wrong one — most GoPro Plus photos carry an Exif block holding only
+  orientation and pixel dimensions, so apps fall back to the mtime. **MP4s are
+  only ever patched in place**: their `mvhd`/`tkhd`/`mdhd` times exist and are
+  fixed-width, and rebuilding a multi-gigabyte ISO-BMFF container over SMB to
+  correct 8 bytes is all risk and no benefit. A JPEG whose Exif holds a
+  MakerNote or thumbnail IFD is skipped, because a rebuild relocates every
+  value and those hold TIFF-absolute offsets of their own.
+- Because `fix-dates` deliberately changes bytes, the origin's size and ETag
+  stop describing the local file. `manifest.record_date_fix()` moves them into
+  `origin_size`/`origin_checksum` and installs a local md5 (`checksum_algo`
+  `md5`), which `verify.py`'s existing non-etag branch already re-hashes —
+  otherwise `verify --fix` would delete each repaired file and re-download the
+  broken one. `upsert_file`'s ON CONFLICT freezes `expected_size`/`checksum`
+  once `dates_fixed_at` is set, for the same reason `date_folder` is frozen for
+  done items: the next `sync` must not undo the repair.
+- `mediadates.scan_mp4` walks the box tree with **seeks on an open file**, not
+  a slurped header. Reading even a 4 MiB head from each of a thousand videos is
+  gigabytes over SMB to inspect a few hundred bytes; `fix-dates` traverses the
+  whole library.
 - Two unrelated storage roots, do not conflate them: `<dest>/.gopro-dl/`
   (`config.py`) is the per-destination manifest/log dir and travels with a
   given `--dest`; `locations.py: AppDirs` (`platformdirs`-based) is the

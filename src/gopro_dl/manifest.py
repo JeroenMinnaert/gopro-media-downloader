@@ -55,6 +55,10 @@ CREATE TABLE IF NOT EXISTS media_files (
   checksum TEXT,
   checksum_algo TEXT,
   checksum_state TEXT,
+  -- what the origin holds, kept aside once `fix-dates` edits the local bytes
+  origin_checksum TEXT,
+  origin_size INTEGER,
+  dates_fixed_at TEXT,
   target_path TEXT NOT NULL UNIQUE,
   state TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER NOT NULL DEFAULT 0,
@@ -102,8 +106,18 @@ class Manifest:
             existing = {
                 row["name"] for row in self.conn.execute("PRAGMA table_info(media_files)")
             }
+            added = False
             if "checksum_state" not in existing:
                 self.conn.execute("ALTER TABLE media_files ADD COLUMN checksum_state TEXT")
+                added = True
+            # `fix-dates` rewrites bytes on purpose, so the origin's size and
+            # hash stop describing the local file; they are kept here while the
+            # live columns switch to describing what is actually on disk.
+            for column in ("origin_checksum TEXT", "origin_size INTEGER", "dates_fixed_at TEXT"):
+                if column.split()[0] not in existing:
+                    self.conn.execute(f"ALTER TABLE media_files ADD COLUMN {column}")
+                    added = True
+            if added:
                 self.conn.commit()
 
     def close(self) -> None:
@@ -379,9 +393,18 @@ class Manifest:
                 ) VALUES (?,?,?,?,?,?,?, 'pending')
                 ON CONFLICT(media_id, item_number) DO UPDATE SET
                   filename=excluded.filename,
-                  expected_size=COALESCE(excluded.expected_size, media_files.expected_size),
-                  checksum=COALESCE(excluded.checksum, media_files.checksum),
-                  checksum_algo=COALESCE(excluded.checksum_algo, media_files.checksum_algo)
+                  -- Once `fix-dates` has edited a file, the origin's size and
+                  -- hash describe GoPro's copy, not ours; re-applying them here
+                  -- would make `verify --fix` delete the repaired file.
+                  expected_size=CASE WHEN media_files.dates_fixed_at IS NOT NULL
+                    THEN media_files.expected_size
+                    ELSE COALESCE(excluded.expected_size, media_files.expected_size) END,
+                  checksum=CASE WHEN media_files.dates_fixed_at IS NOT NULL
+                    THEN media_files.checksum
+                    ELSE COALESCE(excluded.checksum, media_files.checksum) END,
+                  checksum_algo=CASE WHEN media_files.dates_fixed_at IS NOT NULL
+                    THEN media_files.checksum_algo
+                    ELSE COALESCE(excluded.checksum_algo, media_files.checksum_algo) END
                 """,
                 (media_id, item_number, filename, expected_size, checksum, checksum_algo, target_path),
             )
@@ -452,6 +475,73 @@ class Manifest:
             params.append(limit)
         with self._lock:
             return list(self.conn.execute(sql, params).fetchall())
+
+    def files_for_date_fix(
+        self,
+        since: str | None = None,
+        until: str | None = None,
+        limit: int | None = None,
+    ) -> list[sqlite3.Row]:
+        """Done files, with the capture metadata `fix-dates` compares against."""
+        sql = """
+            SELECT f.*, i.captured_at, i.captured_at_timezone, i.date_folder
+            FROM media_files f JOIN media_items i ON i.id = f.media_id
+            WHERE f.state = 'done'
+        """
+        params: list[Any] = []
+        if since:
+            sql += " AND i.date_folder >= ?"
+            params.append(since)
+        if until:
+            sql += " AND i.date_folder <= ?"
+            params.append(until)
+        sql += " ORDER BY i.captured_at ASC, f.item_number ASC"
+        if limit:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._lock:
+            return list(self.conn.execute(sql, params).fetchall())
+
+    def record_date_fix(
+        self,
+        file_id: int,
+        local_checksum: str,
+        size: int | None,
+        origin_checksum: str | None = None,
+        origin_size: int | None = None,
+    ) -> None:
+        """Point verification at the repaired bytes, keeping the origin's aside.
+
+        The origin columns are only filled the first time, so re-running
+        `fix-dates` never overwrites GoPro's hash with one of our own.
+        """
+        with self._lock:
+            self.conn.execute(
+                "UPDATE media_files SET "
+                "origin_checksum=COALESCE(origin_checksum, ?), "
+                "origin_size=COALESCE(origin_size, ?), "
+                "checksum=?, checksum_algo='md5', checksum_state='local_after_date_fix', "
+                "expected_size=COALESCE(?, expected_size), "
+                "actual_size=COALESCE(?, actual_size), dates_fixed_at=? "
+                "WHERE id=?",
+                (
+                    origin_checksum,
+                    origin_size,
+                    local_checksum,
+                    size,
+                    size,
+                    _now(),
+                    file_id,
+                ),
+            )
+            self.conn.commit()
+
+    def date_fix_summary(self) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT COUNT(*) AS n FROM media_files WHERE dates_fixed_at IS NOT NULL"
+            ).fetchone()
+        return int(row["n"]) if row else 0
 
     def set_checksum(
         self, file_id: int, checksum: str, algo: str = "s3-etag", state: str | None = None
