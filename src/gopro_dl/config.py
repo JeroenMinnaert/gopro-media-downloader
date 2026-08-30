@@ -8,8 +8,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .appdirs import DEFAULT_TOKEN_FILE, default_dest, manifest_dir_for
 from .models import DEFAULT_TYPES
 from .paths import parse_timezone
+from .preflight import is_network_filesystem
 
 STATE_DIRNAME = ".gopro-dl"
 MANIFEST_NAME = "manifest.db"
@@ -55,8 +57,11 @@ def load_config(args) -> Config:
     """Build a Config from parsed CLI args, environment and .env."""
     load_dotenv(override=False)
 
-    dest = _expand(getattr(args, "dest", None) or _env("GOPRO_DEST") or "./downloads")
-    token_file = _expand(getattr(args, "token_file", None) or _env("GOPRO_TOKEN_FILE"))
+    dest = _expand(getattr(args, "dest", None) or _env("GOPRO_DEST")) or default_dest()
+    token_file = (
+        _expand(getattr(args, "token_file", None) or _env("GOPRO_TOKEN_FILE"))
+        or DEFAULT_TOKEN_FILE
+    )
 
     concurrency = getattr(args, "concurrency", None)
     if concurrency is None:
@@ -95,4 +100,28 @@ def load_config(args) -> Config:
         ),
         non_interactive=bool(getattr(args, "non_interactive", False)),
         quiet=bool(getattr(args, "quiet", False)),
+    )
+
+
+def apply_network_manifest_redirect(config: Config) -> str | None:
+    """If `dest` looks like a network mount and no --manifest-dir was given,
+    point the manifest and logs at a local per-user location instead --
+    SMB/NFS can silently corrupt SQLite's WAL journal. Mutates `config` in
+    place; returns a notice to display, or None if nothing changed.
+    """
+    if config.manifest_dir is not None:
+        return None
+    if (config.dest / STATE_DIRNAME / MANIFEST_NAME).exists():
+        # Already colocated from a previous run -- never split an established
+        # manifest by redirecting out from under it, and skip the mount/df
+        # subprocess call on what's presumably the common, fast, repeated path
+        # (status/report on an already-running sync).
+        return None
+    if not is_network_filesystem(config.dest):
+        return None
+    config.manifest_dir = manifest_dir_for(config.dest)
+    return (
+        f"{config.dest} looks like a network mount -- keeping the manifest and logs "
+        f"locally at {config.manifest_dir} instead (SMB/NFS can corrupt SQLite's WAL "
+        f"journal). Override with --manifest-dir."
     )

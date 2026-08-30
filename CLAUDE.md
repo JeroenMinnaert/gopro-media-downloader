@@ -99,3 +99,15 @@ this ordering is load-bearing for not losing work.
   `preflight.py` shells out to `df` for free-space checks instead of using
   `shutil.disk_usage` — this is the reason CI runs on macOS at all.
 - Config precedence is flag → env var → `.env` → default (`config.py`).
+- `preflight.py: is_network_filesystem()` detects a network `--dest` (`mount`
+  on macOS, `df --output=fstype` on Linux) so `config.py:
+  apply_network_manifest_redirect()` can steer the manifest/logs onto local
+  disk automatically — SMB/NFS silently corrupt SQLite's WAL journal. Only
+  applies when `--manifest-dir` wasn't given explicitly, and only runs for
+  the commands that actually open the manifest (`cli.py: MANIFEST_COMMANDS`);
+  fails open (assumes local) on any detection error.
+- Two unrelated storage roots, do not conflate them: `<dest>/.gopro-dl/`
+  (`config.py`) is the per-destination manifest/log dir and travels with a
+  given `--dest`; `appdirs.py` (`platformdirs`-based) is the tool's own
+  global, per-user state — the saved token and the persisted Playwright
+  browser-login profile (`browser_login.py`).

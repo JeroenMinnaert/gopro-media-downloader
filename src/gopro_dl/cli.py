@@ -4,20 +4,25 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import sys
 import threading
+from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
 
 from .api import AuthExpired, GoProClient
-from .auth import AuthGate, TokenError, TokenProvider
+from .auth import AuthGate, TokenError, TokenProvider, token_instructions
 from .backfill import backfill_etags
+from .browser_login import fetch_cached as fetch_cached_browser_token
+from .browser_login import login as login_via_browser
 from .circuit import CircuitBreaker
-from .config import Config, load_config
+from .config import Config, apply_network_manifest_redirect, load_config
 from .logging_setup import log_event, setup_logging
 from .manifest import Manifest
+from .paths import parse_timezone
 from .preflight import PreflightError, check_destination, check_disk_space, human_bytes
 from .progress import DownloadProgress, NullProgress
 from .runner import DownloadRunner, SyncStats, refresh_manifest
@@ -37,8 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def common(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--dest", help="destination directory (default ./downloads)")
+    def common(p: argparse.ArgumentParser, needs_manifest: bool = True) -> None:
+        # needs_manifest steers the network-mount-detection check in main():
+        # only commands that actually open the manifest (the default) should
+        # pay for it. `token`/`setup` opt out explicitly below.
+        p.set_defaults(needs_manifest=needs_manifest)
+        p.add_argument("--dest", help="destination directory (default ~/Downloads/GoPro)")
         p.add_argument("--manifest-dir", help="where to keep manifest.db and logs")
         p.add_argument("--token", help="bearer token (prefer --token-file for long runs)")
         p.add_argument("--token-file", help="file holding the bearer token")
@@ -96,7 +105,22 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--limit", type=int, help="only process N files")
 
     token = sub.add_parser("token", help="validate the current token")
-    common(token)
+    common(token, needs_manifest=False)
+
+    setup = sub.add_parser(
+        "setup",
+        help="wizard: log into GoPro in a browser window (or paste a token), "
+        "pick a destination, write .env",
+    )
+    common(setup, needs_manifest=False)
+    setup.add_argument(
+        "--force", action="store_true", help="overwrite an existing token file or .env"
+    )
+    setup.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="skip the automated browser login and always prompt for the token",
+    )
 
     return parser
 
@@ -146,16 +170,166 @@ def install_sigint(shutdown: threading.Event) -> None:
 # -- commands --------------------------------------------------------------
 
 
+def _validate_raw_token(config: Config, token: str) -> tuple[dict | None, str]:
+    gate, shutdown = AuthGate(), threading.Event()
+    with make_client(config, gate, shutdown, TokenProvider(token=token)) as client:
+        return client.validate_token(), client.auth_mode
+
+
 def cmd_token(config: Config) -> int:
     tokens = TokenProvider(config.token, config.token_file)
-    gate, shutdown = AuthGate(), threading.Event()
-    with make_client(config, gate, shutdown, tokens) as client:
-        account = client.validate_token()
+    account, auth_mode = _validate_raw_token(config, tokens.token)
     if account is None:
         console.print("[red]Token rejected.[/red] Copy a fresh one (see README) and retry.")
         return 1
     label = account.get("email") or account.get("id") or "authenticated"
-    console.print(f"[green]Token OK[/green] - {label} (auth mode: {client.auth_mode})")
+    console.print(f"[green]Token OK[/green] - {label} (auth mode: {auth_mode})")
+    return 0
+
+
+def _validate_token(config: Config, token: str) -> dict | None:
+    account, _ = _validate_raw_token(config, token)
+    return account
+
+
+def _ask(prompt: str, default: str | None = "") -> str | None:
+    """console.input(), falling back to `default` on Ctrl-C/Ctrl-D."""
+    try:
+        return console.input(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        return default
+
+
+def _prompt_for_token() -> str | None:
+    console.print(token_instructions("the prompt below"))
+    token = _ask("\nPaste your gp_access_token value: ", default=None)
+    if token is None:
+        console.print("\n[yellow]Setup cancelled.[/yellow]")
+    return token
+
+
+def _detect_timezone() -> str | None:
+    """Best-effort: the system's IANA timezone, e.g. "Europe/Brussels".
+
+    Reads the /etc/localtime symlink -- how macOS and most Linux distros
+    represent the configured system timezone. Never raises: returns None if
+    that link doesn't exist, isn't a symlink, or resolves to something that
+    isn't actually a valid IANA zone.
+    """
+    try:
+        target = os.readlink("/etc/localtime")
+    except OSError:
+        return None
+    _, sep, name = target.partition("zoneinfo/")
+    if not sep:
+        return None
+    try:
+        parse_timezone(name)
+    except Exception:
+        return None
+    return name
+
+
+def cmd_setup(config: Config, args) -> int:
+    """First-run wizard: get/validate a token, pick a destination, write .env."""
+    console.print("[bold]gopro-dl setup[/bold] - token, destination and .env in one pass.\n")
+
+    token, source, account = config.token, ("--token" if config.token else None), None
+
+    if not token and not args.no_browser:
+        console.print("[dim]Checking for a saved GoPro browser session...[/dim]")
+        cached = fetch_cached_browser_token()
+        if cached and (account := _validate_token(config, cached)) is not None:
+            token, source = cached, "a saved browser session"
+        elif cached:
+            console.print("[dim]That session has expired.[/dim]")
+
+    if not token and not args.no_browser:
+        fresh = login_via_browser(console)
+        if fresh and (account := _validate_token(config, fresh)) is not None:
+            token, source = fresh, "browser login"
+
+    if not token:
+        token = _prompt_for_token()
+        if token is None:
+            return 130
+        source, account = "pasted", None
+
+    if not token:
+        console.print("[red]No token provided.[/red]")
+        return 1
+
+    if account is None:
+        account = _validate_token(config, token)
+    if account is None:
+        console.print(
+            "[red]That token was rejected by GoPro.[/red] Copy a fresh one and re-run `gopro-dl setup`."
+        )
+        return 1
+    label = account.get("email") or account.get("id") or "authenticated"
+    console.print(f"[green]Token OK[/green] - {label} (via {source})\n")
+
+    token_file = config.token_file
+    write_token = True
+    if token_file.exists() and not args.force:
+        answer = _ask(f"{token_file} already exists - overwrite? [y/N]: ", default="n")
+        write_token = answer.lower() == "y"
+
+    if write_token:
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.parent.chmod(0o700)
+        token_file.write_text(token + "\n", encoding="utf-8")
+        token_file.chmod(0o600)
+        console.print(f"[green]Wrote[/green] {token_file} (chmod 600)")
+    else:
+        console.print(f"[dim]Left {token_file} untouched.[/dim]")
+
+    dest = config.dest
+    if not getattr(args, "dest", None):
+        answer = _ask(f"Destination for media (Enter to accept {dest}): ")
+        if answer:
+            dest = Path(answer).expanduser()
+    dest.mkdir(parents=True, exist_ok=True)
+    console.print(f"Destination: {dest}")
+
+    tz_name = getattr(args, "timezone", None) or ""
+    if not tz_name:
+        detected = _detect_timezone()
+        if detected:
+            console.print(f"[dim]Detected timezone: {detected} (override with --timezone if wrong)[/dim]")
+            tz_name = detected
+        else:
+            tz_name = _ask(
+                "Home timezone for folder dates, e.g. Europe/Brussels (optional, Enter to skip): "
+            )
+    if tz_name:
+        try:
+            parse_timezone(tz_name)
+        except Exception as exc:
+            console.print(f"[yellow]Ignoring timezone {tz_name!r}: {exc}[/yellow]")
+            tz_name = ""
+
+    env_path = Path(".env")
+    if env_path.exists() and not args.force:
+        console.print(
+            f"\n[dim]{env_path} already exists - leaving it as is. Make sure it has:\n"
+            f"  GOPRO_TOKEN_FILE={token_file}\n"
+            f"  GOPRO_DEST={dest}"
+            + (f"\n  GOPRO_TIMEZONE={tz_name}" if tz_name else "")
+            + "[/dim]"
+        )
+    else:
+        lines = [
+            "# Written by `gopro-dl setup`. See .env.example for every option.\n",
+            f"GOPRO_TOKEN_FILE={token_file}\n",
+            f"GOPRO_DEST={dest}\n",
+        ]
+        if tz_name:
+            lines.append(f"GOPRO_TIMEZONE={tz_name}\n")
+        env_path.write_text("".join(lines), encoding="utf-8")
+        console.print(f"[green]Wrote[/green] {env_path.resolve()}")
+
+    console.print("\n[bold]Next:[/bold] gopro-dl sync --dry-run --limit 5")
     return 0
 
 
@@ -171,7 +345,7 @@ def cmd_sync(config: Config, args) -> int:
             check_destination(config.dest, create=True)
             account = client.validate_token()
             if account is None:
-                console.print("[red]Token rejected.[/red] Run `gopro-dl token --check`.")
+                console.print("[red]Token rejected.[/red] Run `gopro-dl token` to check it.")
                 return 1
             if client.user_id:
                 manifest.set_meta("gopro_user_id", client.user_id)
@@ -444,6 +618,11 @@ def main(argv: list[str] | None = None) -> int:
         console.print(f"[red]{exc}[/red]")
         return 1
 
+    if args.needs_manifest:
+        notice = apply_network_manifest_redirect(config)
+        if notice:
+            console.print(f"[yellow]{notice}[/yellow]")
+
     try:
         log_path = setup_logging(
             config.log_dir, quiet=config.quiet, verbose=getattr(args, "verbose", False)
@@ -459,6 +638,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "token":
             return cmd_token(config)
+        if args.command == "setup":
+            return cmd_setup(config, args)
         if args.command == "sync":
             return cmd_sync(config, args)
         if args.command == "status":
@@ -477,7 +658,7 @@ def main(argv: list[str] | None = None) -> int:
     except AuthExpired:
         console.print(
             "[red]GoPro rejected the token.[/red] Refresh it (see README) and "
-            "check with `gopro-dl token --check`."
+            "check with `gopro-dl token`."
         )
         return 1
     except PreflightError as exc:

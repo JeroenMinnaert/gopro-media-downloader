@@ -7,6 +7,7 @@ import respx
 from conftest import load_fixture
 from rich.console import Console
 
+import gopro_dl.auth as auth_module
 import gopro_dl.cli as cli_module
 from gopro_dl.api import API_HOST
 from gopro_dl.auth import AuthGate, TokenProvider, refresh_token_interactively
@@ -52,6 +53,65 @@ def test_non_interactive_refresh_picks_up_a_changed_token_file(tmp_path):
         timeout_seconds=5,
     )
     assert ok and provider.token == GOOD
+
+
+def test_interactive_refresh_finds_a_refreshed_browser_session_silently(monkeypatch):
+    """A saved browser session that's since refreshed must resume without a prompt."""
+    monkeypatch.setattr(auth_module, "fetch_cached_browser_token", lambda: "fresh-from-browser")
+
+    def fail_if_prompted():
+        raise AssertionError("should have resumed silently, never reached the prompt")
+
+    provider = TokenProvider(token="stale")
+    ok = refresh_token_interactively(
+        provider,
+        validate=lambda t: t == "fresh-from-browser",
+        console=FakeConsole(fail_if_prompted),
+    )
+    assert ok
+    assert provider.token == "fresh-from-browser"
+
+
+def test_interactive_refresh_ignores_a_cached_token_identical_to_the_current_one(monkeypatch):
+    """No point re-validating the exact token that just got rejected."""
+    monkeypatch.setattr(auth_module, "fetch_cached_browser_token", lambda: EXPIRED)
+    provider = TokenProvider(token=EXPIRED)
+    answers = iter([GOOD])
+    ok = refresh_token_interactively(
+        provider,
+        validate=lambda t: t == GOOD,
+        console=FakeConsole(lambda: next(answers)),
+    )
+    assert ok and provider.token == GOOD
+
+
+def test_interactive_refresh_types_b_to_log_into_a_browser(monkeypatch):
+    monkeypatch.setattr(auth_module, "fetch_cached_browser_token", lambda: None)
+    monkeypatch.setattr(auth_module, "login_via_browser", lambda console: "logged-in-token")
+    provider = TokenProvider(token="stale")
+    ok = refresh_token_interactively(
+        provider,
+        validate=lambda t: t == "logged-in-token",
+        console=FakeConsole(lambda: "b"),
+    )
+    assert ok
+    assert provider.token == "logged-in-token"
+
+
+def test_interactive_refresh_falls_back_to_paste_when_browser_login_fails(monkeypatch):
+    # login_via_browser() never raises -- a failed/declined Chromium install
+    # surfaces the same way as a cancelled or timed-out login: None back.
+    monkeypatch.setattr(auth_module, "fetch_cached_browser_token", lambda: None)
+    monkeypatch.setattr(auth_module, "login_via_browser", lambda console: None)
+    provider = TokenProvider(token="stale")
+    answers = iter(["b", GOOD])  # "b" finds nothing, then a plain paste succeeds
+    ok = refresh_token_interactively(
+        provider,
+        validate=lambda t: t == GOOD,
+        console=FakeConsole(lambda: next(answers)),
+    )
+    assert ok
+    assert provider.token == GOOD
 
 
 def test_gate_trips_once_and_releases_everyone():

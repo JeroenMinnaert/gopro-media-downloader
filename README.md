@@ -15,7 +15,7 @@ Proven on a real library: 1,217 items / 1.4 TiB, including 22 chaptered
 recordings and a 4-chapter 13.6 GiB clip.
 
 ```
-downloads/
+~/Downloads/GoPro/            # the default destination -- override with --dest
 ├── 2023-07-14/
 │   ├── GX010123.MP4
 │   └── GOPR0456.JPG
@@ -27,40 +27,113 @@ downloads/
 ## Install
 
 ```bash
+pipx install gopro-media-downloader   # once published to PyPI
+gopro-dl --help
+```
+
+Or from source, in a virtualenv:
+
+```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .
 .venv/bin/gopro-dl --help
 ```
 
-## Get your token
+## Get your token and get set up
 
-There is deliberately **no login flow** — GoPro's sign-in involves OAuth and
-CAPTCHAs. You paste a bearer token instead. It expires after a while, which the
-tool handles mid-run without losing progress (see below).
+There is deliberately **no username/password handling in this tool** — GoPro's
+sign-in involves OAuth and CAPTCHAs, and this tool never touches your
+credentials. Underneath, it uses a bearer token (the `gp_access_token`
+session cookie) that expires after a while; the tool handles that mid-run
+without losing progress (see below).
+
+The setup wizard gets you a token, validates it, and writes a starter `.env` —
+just run it, nothing to install by hand first:
+
+```bash
+gopro-dl setup
+```
+
+```
+gopro-dl setup - token, destination and .env in one pass.
+
+Checking for a saved GoPro browser session...
+Downloading the browser used for GoPro login (one-time, ~250MB)...
+A browser window has opened. Log into GoPro there -- this continues
+automatically once you're signed in, or Ctrl-C to give up.
+Token OK - jane@example.com (via browser login)
+
+Wrote /Users/jane/Library/Application Support/gopro-dl/token (chmod 600)
+Destination for media (Enter to accept /Users/jane/Downloads/GoPro): 
+Destination: /Users/jane/Downloads/GoPro
+Detected timezone: Europe/Brussels (override with --timezone if wrong)
+Wrote /Users/jane/.env
+
+Next: gopro-dl sync --dry-run --limit 5
+```
+
+The first time it needs the browser, it downloads Chromium itself (that
+"Downloading..." line only appears once — later runs skip straight to the
+window). A real, visible Chromium window then opens at GoPro's own login
+page — your password goes straight into that page, never through this tool.
+Once you're logged in, the wizard picks the session cookie up from the
+browser and closes the window.
+
+Both the token and that browser login live under the OS's standard per-app
+location instead of loose dotfiles in your home directory — on macOS that's
+`~/Library/Application Support/gopro-dl/` (`token` and `browser-profile/`,
+`chmod 600`/`700`); on Linux it's `~/.config/gopro-dl/token` and
+`~/.local/share/gopro-dl/browser-profile/`. This is separate from
+`<dest>/.gopro-dl/`, which is per-destination and colocated with the media on
+purpose (see below) — the two are unrelated. Most future runs — including
+re-running `setup` and the mid-run token-expiry prompt below — find a
+still-valid browser session there and skip the window entirely.
+
+(If the automatic download fails — no network, a locked-down environment —
+it tells you to run `playwright install chromium` yourself and falls back to
+manual paste in the meantime.)
+
+The destination defaults to `~/Downloads/GoPro` — anchored to the OS's real
+Downloads folder rather than a relative path that depends on which directory
+you happened to run `gopro-dl` from — but the wizard always asks first,
+showing that default so Enter accepts it and typing a path overrides it.
+
+The timezone is auto-detected too, from the system's `/etc/localtime` — the
+wizard only falls back to asking if that can't be read. Pass `--timezone`
+yourself to skip or override detection.
+
+It refuses to write anything until the token validates against the API, and
+never silently overwrites an existing token file or `.env` — it asks first
+(or pass `--force`). Pass `--no-browser` to skip straight to pasting a token by
+hand, or `--token`/`--token-file`/`--dest`/`--timezone` to skip their prompts
+for a scripted run:
+
+```bash
+gopro-dl setup --token "$TOKEN" --token-file ~/mytoken --dest ~/gopro-backup --force
+```
+
+**To get the token value by hand** (what the wizard automates):
 
 1. Open <https://gopro.com/media-library/> in Chrome and log in.
 2. Open DevTools (`Cmd+Option+I`) → **Application** tab → **Storage → Cookies →
    `https://gopro.com`**.
 3. Find the cookie named **`gp_access_token`** and copy its full **Value** — a
    long JWT starting `eyJ...`.
-4. Save it, readable only by you:
-
-   ```bash
-   umask 077 && echo 'eyJ...' > ~/.gopro-token
-   ```
-
-5. Check it:
-
-   ```bash
-   .venv/bin/gopro-dl token --check --token-file ~/.gopro-token
-   ```
 
 **Alternative (Network tab):** DevTools → **Network** → filter `api.gopro.com` →
 reload the page → click any `media/search` request → **Headers** → Request
 Headers → copy everything after `Authorization: Bearer `.
 
 Use `--token-file` rather than `--token` for long runs: the file can be updated
-while the downloader is running.
+while the downloader is running. Check it any time with:
+
+```bash
+gopro-dl token
+```
+
+With no `--token-file`/`GOPRO_TOKEN_FILE` set, this reads from the same
+per-OS default location `setup` wrote to — so it works from any directory,
+not just the one with the `.env` `setup` created.
 
 ## Usage
 
@@ -90,7 +163,7 @@ gopro-dl verify --deep          # re-hash and compare against the origin ETag
 gopro-dl verify --deep --fix    # ... and re-queue anything that fails
 gopro-dl backfill-etags         # fetch checksums for files downloaded earlier
 gopro-dl retry                  # reset failed files, then sync again
-gopro-dl token --check          # is the current token still valid?
+gopro-dl token                  # is the current token still valid?
 ```
 
 A first Ctrl-C stops after the current chunks and keeps every `.part` file;
@@ -108,20 +181,25 @@ flag → environment → `.env` → default.
 
 ## When the token expires mid-run
 
-Expected on a run this long. The download pauses, every worker parks, and you
-get a prompt:
+Expected on a run this long. The download pauses, every worker parks, and the
+tool first silently checks the saved browser profile (from `gopro-dl setup`,
+see above) for a session that has since refreshed — if that works, the run
+just continues with no input from you. Otherwise you get a prompt:
 
 ```
 GoPro token expired or rejected.
   1. Open https://gopro.com/media-library/ in Chrome (log in if needed)
   2. DevTools -> Application -> Cookies -> gopro.com -> gp_access_token
-  3. Copy the value into /Users/you/.gopro-token
-Press Enter once updated, paste a token directly, or Ctrl-C to stop:
+  3. Copy the value into /Users/you/Library/Application Support/gopro-dl/token
+Press Enter once updated, paste a token, type b to log into GoPro in a
+browser, or Ctrl-C to stop:
 ```
 
-Overwrite the token file, press Enter, and the run continues from the exact byte
-it reached. Nothing is re-downloaded. With `--non-interactive` it polls the
-token file instead of prompting, which suits `nohup`/`screen` runs.
+Type `b` to pop open the same browser login the setup wizard uses, paste a
+token directly, or overwrite the token file and press Enter. Either way the
+run continues from the exact byte it reached — nothing is re-downloaded. With
+`--non-interactive` it polls the token file instead of prompting (no browser
+involved), which suits `nohup`/`screen` runs.
 
 Note that a **403 from GoPro's CDN is not** token expiry — signed media URLs are
 time-limited and routinely expire mid-file. Those are refreshed silently and
@@ -226,14 +304,36 @@ it once at the end, not during a download, or the two compete for bandwidth.
 
 ## Downloading straight to a NAS
 
-Media can be written directly to an SMB mount, but **keep the manifest on the
-local disk** with `--manifest-dir`:
+Media can be written directly to an SMB/NFS mount — **the manifest just can't
+live there**, and `gopro-dl` handles that itself: if `--dest` is detected as a
+network mount and you haven't passed `--manifest-dir`, it automatically keeps
+the manifest and logs on local disk instead, under
+`~/Library/Application Support/gopro-dl/manifests/<name>-<hash>/` (macOS) /
+`~/.local/share/gopro-dl/manifests/<name>-<hash>/` (Linux) — keyed by the
+destination path, so re-running against the same NAS folder finds it again.
+You'll see a one-line notice when this kicks in:
+
+```bash
+gopro-dl sync --dest /Volumes/GoPro --token-file ~/gopro-backup/token --timezone Europe/Brussels
+```
+
+```
+/Volumes/GoPro looks like a network mount -- keeping the manifest and logs
+locally at /Users/jane/Library/Application Support/gopro-dl/manifests/GoPro-3f9a1c2b
+instead (SMB/NFS can corrupt SQLite's WAL journal). Override with --manifest-dir.
+```
+
+Detection is best-effort (macOS via `mount`, Linux via `df --output=fstype`)
+and only used to steer the manifest, never to block a run — if it can't tell,
+it just leaves the manifest colocated with `--dest` as usual. Pass
+`--manifest-dir` yourself to pick an exact location instead (e.g. to keep
+several NAS destinations' manifests together under one folder you control):
 
 ```bash
 gopro-dl sync \
   --dest /Volumes/GoPro \
   --manifest-dir ~/gopro-backup/.gopro-dl \
-  --token-file ~/.gopro-token \
+  --token-file ~/gopro-backup/token \
   --timezone Europe/Brussels
 ```
 
@@ -330,6 +430,26 @@ that path only exists on Darwin. Two extra guards catch what unit tests cannot:
 a CLI smoke test run from outside the source tree (packaging and entry-point
 breakage) and a check that a clean environment yields no usable token
 (config-precedence regressions).
+
+Note the test suite never runs `playwright install chromium` and doesn't need
+to: every test that exercises `browser_login` fakes Playwright out entirely
+(`tests/test_browser_login.py`), and an autouse fixture stubs the module's
+two entry points everywhere else, so no test ever launches a real browser.
+
+### Releasing
+
+The version lives in one place, `src/gopro_dl/__init__.py:__version__`. To cut
+a release: bump it, commit, then push a matching tag —
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` builds the sdist/wheel and publishes to PyPI
+via [trusted publishing](https://docs.pypi.org/trusted-publishers/) (OIDC, no
+stored token). One-time setup on PyPI: add this repo as a trusted publisher
+for the `gopro-media-downloader` project, workflow `release.yml`, environment
+`pypi`.
 
 84 tests, all against mocked API responses — no network and no token needed.
 They cover pagination, source-variation selection (including the proxy trap and
