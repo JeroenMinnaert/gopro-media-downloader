@@ -94,10 +94,10 @@ def needs_fix(
 ) -> bool:
     """Does the file disagree with GoPro's answer, or say nothing at all?
 
-    Videos get one concession: cameras routinely write capture-*local* time
-    into ISO-BMFF fields the spec calls UTC. That is a convention, not damage,
-    so a value matching either reading is left alone unless `video_utc` says to
-    normalise it.
+    Fields flagged `ambiguous_clock` get one concession: cameras routinely write
+    capture-*local* time into ISO-BMFF fields the spec calls UTC. That is a
+    convention, not damage, so a value matching either reading is left alone
+    unless `video_utc` says to normalise it.
     """
     if dates.can_add:
         return True
@@ -110,7 +110,7 @@ def needs_fix(
         expected = local if f.clock == "local" else utc_naive
         if not _off_by(f.current, expected, tolerance):
             continue
-        if dates.kind == "mp4" and not video_utc and not _off_by(f.current, local, tolerance):
+        if f.ambiguous_clock and not video_utc and not _off_by(f.current, local, tolerance):
             continue
         return True
     # Tags exist but are all blank or unparseable: worth filling in.
@@ -276,7 +276,7 @@ def fix_dates(
 
         if result.rebuilt:
             report.added_tags += 1
-        _rebase_integrity(manifest, c.row, c.path, changed_size=result.size)
+        _rebase_integrity(manifest, c.row, c.path, digest=result.digest)
         touched_mtime = _set_mtime(c.path, c.utc) if set_mtime else False
         report.fixed.append((c.rel, was, now))
         log_event(
@@ -296,20 +296,26 @@ def fix_dates(
     return report
 
 
-def _rebase_integrity(manifest: Manifest, row, path: Path, changed_size: int | None) -> None:
+def _rebase_integrity(manifest: Manifest, row, path: Path, digest: str | None = None) -> None:
     """Keep `verify` honest after we deliberately changed the bytes.
 
-    The origin's size and ETag are preserved -- they still describe what GoPro
-    holds -- but they no longer describe this file, so a local md5 and the new
-    on-disk size take over as what verification checks against.
+    The origin's size and checksum are preserved -- they still describe what
+    GoPro holds -- but they no longer describe this file, so a local md5 and the
+    new on-disk size take over as what verification checks against.
+
+    `digest` is supplied when the caller already had the finished bytes in
+    memory; otherwise the file is read back to hash it.
     """
-    digest = file_hash(path, "md5")
+    digest = digest or file_hash(path, "md5")
     if digest is None:
         return
+    # Only the first repair sees the origin's values -- after that `checksum`
+    # is already one of ours, and must not be mistaken for GoPro's.
+    first_fix = row["dates_fixed_at"] is None
     manifest.record_date_fix(
         row["id"],
         local_checksum=digest,
-        size=changed_size if changed_size is not None else row["actual_size"],
-        origin_checksum=row["checksum"] if row["checksum_algo"] == "s3-etag" else None,
-        origin_size=row["expected_size"],
+        size=path.stat().st_size,
+        origin_checksum=row["checksum"] if first_fix else None,
+        origin_size=row["expected_size"] if first_fix else None,
     )

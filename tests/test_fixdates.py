@@ -9,7 +9,7 @@ from conftest import make_item
 from test_mediadates import _exif_date, make_jpeg, make_mp4
 
 from gopro_dl.fixdates import expected_times, fix_dates
-from gopro_dl.mediadates import read_dates
+from gopro_dl.mediadates import apply_dates, read_dates
 from gopro_dl.verify import verify
 
 # 22:30 UTC on the 14th is already the 15th in Brussels -- the same conversion
@@ -277,3 +277,37 @@ def test_a_lone_clip_is_not_treated_as_a_group(manifest, tmp_path):
 
     assert report.shifted == 0
     assert read_dates(path).primary == datetime(2023, 7, 14, 22, 30)
+
+
+def test_a_second_repair_does_not_mistake_our_own_hash_for_the_origin(manifest, tmp_path):
+    # Once a file has been repaired, `checksum` holds a local md5. Repairing it
+    # again must not file that away as though it were GoPro's.
+    path = seed(manifest, tmp_path, "IMG_0012.jpg", make_jpeg())
+    fix_dates(manifest, tmp_path)
+    after_first = manifest.get_file("aaa111", 1)
+    assert after_first["origin_checksum"] == "abc-2"
+
+    # Knock the date back out so the file needs repairing a second time.
+    stale = datetime(2019, 1, 1, 9, 0, 0)
+    apply_dates(path, stale, stale.replace(tzinfo=UTC), read_dates(path))
+    report = fix_dates(manifest, tmp_path)
+
+    assert len(report.fixed) == 1
+    row = manifest.get_file("aaa111", 1)
+    assert row["origin_checksum"] == "abc-2"
+    assert row["origin_size"] == after_first["origin_size"]
+    # Restoring the same dates reproduces the same bytes, so the local digest
+    # is stable across repairs -- but it is never the origin's.
+    assert row["checksum"] == after_first["checksum"] != "abc-2"
+
+
+def test_an_origin_checksum_that_is_not_an_etag_is_still_preserved(manifest, tmp_path):
+    # models.py records an md5 or sha1 when the API supplies one, so keying the
+    # hand-off on "was it an s3-etag" would silently drop those.
+    seed(manifest, tmp_path, "IMG_0013.jpg", make_jpeg())
+    file_id = manifest.get_file("aaa111", 1)["id"]
+    manifest.set_checksum(file_id, "d41d8cd98f00b204e9800998ecf8427e", algo="md5")
+
+    fix_dates(manifest, tmp_path)
+
+    assert manifest.get_file("aaa111", 1)["origin_checksum"] == "d41d8cd98f00b204e9800998ecf8427e"

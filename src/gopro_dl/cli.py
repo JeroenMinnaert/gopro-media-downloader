@@ -532,6 +532,7 @@ def print_status(manifest: Manifest, config: Config) -> None:
             "mismatch": "[red]checksum mismatch[/red]",
             "unverified": "size-only (resumed file)",
             "not_checked": "size-only (downloaded before checksums)",
+            "local_after_date_fix": "date-repaired (checked against the local copy)",
         }
         console.print(
             "Integrity: " + ", ".join(f"{labels.get(k, k)}={v}" for k, v in sorted(checks.items()))

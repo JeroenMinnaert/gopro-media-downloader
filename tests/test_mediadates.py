@@ -8,6 +8,7 @@ videos with plausible mvhd/tkhd/mdhd creation times.
 
 from __future__ import annotations
 
+import hashlib
 import struct
 from datetime import UTC, datetime
 
@@ -190,12 +191,16 @@ def test_adding_dates_preserves_every_image_byte(tmp_path):
     path = tmp_path / "IMG_0001.jpg"
     path.write_bytes(original)
 
-    result = apply_dates(path, LOCAL, UTC_AT, read_dates(path))
+    dates = read_dates(path)
+    assert "DateTimeOriginal" in dates.missing
+    result = apply_dates(path, LOCAL, UTC_AT, dates)
     assert result.rebuilt
-    assert "DateTimeOriginal" in result.added
 
     after = path.read_bytes()
-    assert len(after) == result.size > len(original)
+    assert len(after) > len(original)
+    # The rebuild hands back the digest of what it wrote, so nothing needs to
+    # read the file back over the network just to hash it.
+    assert result.digest == hashlib.md5(after).hexdigest()
     # Everything from the start-of-scan marker on is the picture itself.
     assert after[after.index(b"\xff\xda") :] == original[original.index(b"\xff\xda") :]
 

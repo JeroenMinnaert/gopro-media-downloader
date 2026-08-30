@@ -392,21 +392,25 @@ class Manifest:
                   checksum_algo, target_path, state
                 ) VALUES (?,?,?,?,?,?,?, 'pending')
                 ON CONFLICT(media_id, item_number) DO UPDATE SET
-                  filename=excluded.filename,
-                  -- Once `fix-dates` has edited a file, the origin's size and
-                  -- hash describe GoPro's copy, not ours; re-applying them here
-                  -- would make `verify --fix` delete the repaired file.
-                  expected_size=CASE WHEN media_files.dates_fixed_at IS NOT NULL
-                    THEN media_files.expected_size
-                    ELSE COALESCE(excluded.expected_size, media_files.expected_size) END,
-                  checksum=CASE WHEN media_files.dates_fixed_at IS NOT NULL
-                    THEN media_files.checksum
-                    ELSE COALESCE(excluded.checksum, media_files.checksum) END,
-                  checksum_algo=CASE WHEN media_files.dates_fixed_at IS NOT NULL
-                    THEN media_files.checksum_algo
-                    ELSE COALESCE(excluded.checksum_algo, media_files.checksum_algo) END
+                  filename=excluded.filename
                 """,
                 (media_id, item_number, filename, expected_size, checksum, checksum_algo, target_path),
+            )
+            # Everything else here describes the *origin's* bytes. Once
+            # `fix-dates` has edited a file those no longer describe what is on
+            # disk, and re-applying them would make `verify --fix` delete the
+            # repaired file and fetch the broken one again. One WHERE states
+            # that rule for every such column, so a column added later inherits
+            # it instead of needing its own guard.
+            self.conn.execute(
+                """
+                UPDATE media_files SET
+                  expected_size=COALESCE(?, expected_size),
+                  checksum=COALESCE(?, checksum),
+                  checksum_algo=COALESCE(?, checksum_algo)
+                WHERE media_id=? AND item_number=? AND dates_fixed_at IS NULL
+                """,
+                (expected_size, checksum, checksum_algo, media_id, item_number),
             )
             self.conn.commit()
             row = self.conn.execute(
@@ -506,7 +510,7 @@ class Manifest:
         self,
         file_id: int,
         local_checksum: str,
-        size: int | None,
+        size: int,
         origin_checksum: str | None = None,
         origin_size: int | None = None,
     ) -> None:
@@ -521,8 +525,7 @@ class Manifest:
                 "origin_checksum=COALESCE(origin_checksum, ?), "
                 "origin_size=COALESCE(origin_size, ?), "
                 "checksum=?, checksum_algo='md5', checksum_state='local_after_date_fix', "
-                "expected_size=COALESCE(?, expected_size), "
-                "actual_size=COALESCE(?, actual_size), dates_fixed_at=? "
+                "expected_size=?, actual_size=?, dates_fixed_at=? "
                 "WHERE id=?",
                 (
                     origin_checksum,
@@ -535,13 +538,6 @@ class Manifest:
                 ),
             )
             self.conn.commit()
-
-    def date_fix_summary(self) -> int:
-        with self._lock:
-            row = self.conn.execute(
-                "SELECT COUNT(*) AS n FROM media_files WHERE dates_fixed_at IS NOT NULL"
-            ).fetchone()
-        return int(row["n"]) if row else 0
 
     def set_checksum(
         self, file_id: int, checksum: str, algo: str = "s3-etag", state: str | None = None
