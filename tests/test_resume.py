@@ -307,3 +307,52 @@ def test_origin_size_far_below_the_listing_is_not_tolerated(manifest, tmp_path, 
     )
 
     assert outcome.state == "failed" and "size mismatch" in outcome.reason
+
+
+@respx.mock
+def test_corrected_size_is_persisted_so_verify_stays_clean(manifest, tmp_path, client):
+    """The stale expectation must not survive in the manifest: `verify` compares
+    on-disk bytes against expected_size, and `verify --fix` would delete the good
+    file and fetch it again on every run."""
+    from gopro_dl.verify import verify as run_verify
+
+    big = bytes(range(256)) * 20480  # 5 MiB
+    respx.get(CDN).mock(return_value=httpx.Response(200, content=big))
+    listed = len(big) + 3280
+    item, row = seed(manifest, tmp_path, size=listed)
+
+    runner_row = manifest.get_file(item.id, 1)
+    outcome = build(manifest, tmp_path, client).fetch_file(
+        item, source_of(item, size=listed), row, "2023-07-15"
+    )
+    assert outcome.size_corrected
+    manifest.mark_done(runner_row["id"], outcome.size, size_corrected=outcome.size_corrected)
+
+    stored = manifest.get_file(item.id, 1)
+    assert stored["expected_size"] == len(big)
+
+    report = run_verify(manifest, tmp_path / "media")
+    assert report.wrong_size == []
+
+
+@respx.mock
+def test_good_file_on_disk_survives_a_stale_rebuilt_manifest(manifest, tmp_path, client):
+    """A rebuilt manifest re-reads file_size from the API. The file already on
+    disk is correct, so it must be kept rather than deleted and re-downloaded."""
+    big = bytes(range(256)) * 20480  # 5 MiB
+    route = respx.get(CDN).mock(return_value=httpx.Response(200, content=big))
+    listed = len(big) + 3280
+    item, row = seed(manifest, tmp_path, size=listed)
+
+    final = tmp_path / "media" / "2023-07-15" / "GX010001.MP4"
+    final.parent.mkdir(parents=True)
+    final.write_bytes(big)
+
+    outcome = build(manifest, tmp_path, client).fetch_file(
+        item, source_of(item, size=listed), row, "2023-07-15"
+    )
+
+    assert outcome.state == "done" and outcome.reason == "already_on_disk"
+    assert outcome.size_corrected
+    assert not route.called  # nothing re-downloaded
+    assert final.read_bytes() == big

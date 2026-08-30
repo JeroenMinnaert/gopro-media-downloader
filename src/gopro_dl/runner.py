@@ -230,6 +230,7 @@ class DownloadRunner:
                 file_id,
                 outcome.size,
                 size_unverified=outcome.reason == "size_unverified",
+                size_corrected=outcome.size_corrected,
                 checksum=outcome.checksum,
                 checksum_algo="s3-etag" if outcome.checksum else None,
                 checksum_state=outcome.checksum_state,

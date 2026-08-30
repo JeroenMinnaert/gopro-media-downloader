@@ -43,6 +43,7 @@ class FileOutcome:
     reason: str = ""
     checksum: str | None = None
     checksum_state: str | None = None  # ok | mismatch | unverified
+    size_corrected: bool = False  # the listing size was stale; `size` is the origin's
 
 
 @dataclass
@@ -171,6 +172,18 @@ class Downloader:
             actual = final.stat().st_size
             if expected is None or actual == expected:
                 return FileOutcome("done", 0, actual, "already_on_disk")
+            if within_listing_drift(expected, actual):
+                # Same stale listing size as below, met one path earlier: a
+                # rebuilt manifest re-reads file_size from the API, so without
+                # this a good file on disk would be deleted and fetched again.
+                log_event(
+                    logging.WARNING,
+                    "listing_size_stale",
+                    path=relpath,
+                    listed=expected,
+                    origin=actual,
+                )
+                return FileOutcome("done", 0, actual, "already_on_disk", size_corrected=True)
             log_event(
                 logging.WARNING,
                 "existing_file_size_mismatch",
@@ -184,6 +197,7 @@ class Downloader:
         refreshes = 0
         last_stream_error = ""
         transferred = 0  # bytes actually pulled this run, excluding a resumed .part
+        size_corrected = False  # True once a stale listing size yielded to the origin
         etag: str | None = file_row["checksum"]
         verifier: EtagVerifier | None = None
         handle = self.on_file_start(relpath, expected) if self.on_file_start else None
@@ -236,6 +250,7 @@ class Downloader:
                             origin=advertised,
                         )
                         expected = advertised
+                        size_corrected = True
                     if written is not None:
                         transferred += written
                         break
@@ -304,6 +319,7 @@ class Downloader:
                 "done", transferred, actual,
                 "" if expected is not None else "size_unverified",
                 checksum=etag, checksum_state=checksum_state,
+                size_corrected=size_corrected,
             )
             return outcome
         except ShuttingDown:
