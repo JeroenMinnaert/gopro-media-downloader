@@ -68,6 +68,6 @@ jobs:
         # refuse rather than silently reach for something unexpected.
         run: |
           cd "$(mktemp -d)"
-          if gopro-dl token --check; then
+          if HOME="$(mktemp -d)" gopro-dl token; then
             echo "expected a clean environment to have no usable token"; exit 1
           fi
