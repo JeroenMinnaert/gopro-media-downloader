@@ -32,11 +32,16 @@ videos is gigabytes over SMB to inspect a few hundred bytes.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import struct
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import partial
+
+from .paths import split_ext
 
 # ISO-BMFF timestamps count seconds from 1904-01-01T00:00:00Z.
 _QT_EPOCH = datetime(1904, 1, 1, tzinfo=UTC)
@@ -67,6 +72,8 @@ _LOCAL_ASCII_TAGS = {
     _TAG_DATETIME_ORIGINAL: "DateTimeOriginal",
     _TAG_DATETIME_DIGITIZED: "DateTimeDigitized",
 }
+# The tags a complete photo carries, named once so nothing drifts.
+_DATE_TAG_NAMES = tuple(_LOCAL_ASCII_TAGS.values())
 # Where each date tag belongs when we have to create it.
 _IFD0_DATE_TAGS = (_TAG_DATETIME,)
 _EXIF_DATE_TAGS = (_TAG_DATETIME_ORIGINAL, _TAG_DATETIME_DIGITIZED)
@@ -94,7 +101,13 @@ class DateField:
     length: int
     clock: str  # "local" or "utc"
     current: datetime | None
-    encoder: str
+    # Renders a replacement for this field. Returns None when the value cannot
+    # be expressed in the bytes available, which only the variable-length
+    # QuickTime day atom can do.
+    encoder: Callable[[datetime, int], bytes | None]
+    # ISO-BMFF calls these fields UTC, but cameras routinely write capture-local
+    # time into them. A value matching either reading is not evidence of damage.
+    ambiguous_clock: bool = False
 
 
 @dataclass
@@ -136,23 +149,26 @@ class MediaDates:
 # -- encoding --------------------------------------------------------------
 
 
-def _encode(kind: str, value: datetime, length: int) -> bytes:
-    if kind == "exif-datetime":
-        return value.strftime("%Y:%m:%d %H:%M:%S").encode("ascii") + b"\x00"
-    if kind == "exif-datestamp":
-        return value.strftime("%Y:%m:%d").encode("ascii") + b"\x00"
-    if kind in ("gps-timestamp-be", "gps-timestamp-le"):
-        endian = ">" if kind.endswith("-be") else "<"
-        return struct.pack(endian + "6I", value.hour, 1, value.minute, 1, value.second, 1)
-    if kind == "qt-time":
-        seconds = int((value.replace(tzinfo=UTC) - _QT_EPOCH).total_seconds())
-        if seconds < 0 or seconds > _QT_MAX:
-            raise ValueError(f"{value} is outside the ISO-BMFF epoch")
-        return struct.pack(">I" if length == 4 else ">Q", seconds)
-    raise ValueError(f"unknown encoder {kind!r}")
+def _exif_datetime(value: datetime, length: int = _EXIF_DT_LEN) -> bytes:
+    return value.strftime("%Y:%m:%d %H:%M:%S").encode("ascii") + b"\x00"
 
 
-def _encode_day(value: datetime, length: int) -> bytes | None:
+def _exif_datestamp(value: datetime, length: int = 11) -> bytes:
+    return value.strftime("%Y:%m:%d").encode("ascii") + b"\x00"
+
+
+def _gps_timestamp(endian: str, value: datetime, length: int = 24) -> bytes:
+    return struct.pack(endian + "6I", value.hour, 1, value.minute, 1, value.second, 1)
+
+
+def _qt_time(value: datetime, length: int) -> bytes:
+    seconds = int((value.replace(tzinfo=UTC) - _QT_EPOCH).total_seconds())
+    if seconds < 0 or seconds > _QT_MAX:
+        raise ValueError(f"{value} is outside the ISO-BMFF epoch")
+    return struct.pack(">I" if length == 4 else ">Q", seconds)
+
+
+def _qt_day(value: datetime, length: int) -> bytes | None:
     """©day is variable length, so only rewrite when the new text fits exactly."""
     for text in (
         value.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -217,11 +233,11 @@ def _locate_app1(data: bytes) -> tuple[int, int] | None:
 
 def _insertion_point(data: bytes) -> int:
     """Where a new APP1 goes: after APP0 if present, otherwise right after SOI."""
-    for marker, start, end in _iter_jpeg_segments(data):
-        if marker == 0xE0:
-            return end
-        return start
-    return 2
+    first = next(_iter_jpeg_segments(data), None)
+    if first is None:
+        return 2
+    marker, start, end = first
+    return end if marker == 0xE0 else start
 
 
 # -- JPEG: TIFF structure --------------------------------------------------
@@ -299,7 +315,7 @@ def scan_jpeg(data: bytes) -> MediaDates:
     if located is None:
         return MediaDates(
             "jpeg",
-            missing=("DateTime", "DateTimeOriginal", "DateTimeDigitized"),
+            missing=_DATE_TAG_NAMES,
             exif=JpegExif(">", [], [], [], None, None),
         )
 
@@ -343,27 +359,19 @@ def scan_jpeg(data: bytes) -> MediaDates:
         )
         return True
 
-    present = set()
-    for tag in _IFD0_DATE_TAGS:
-        if add_ascii(
-            ifd0, ifd0_off, tag, _LOCAL_ASCII_TAGS[tag], _EXIF_DT_LEN, "local", "exif-datetime"
-        ):
-            present.add(_LOCAL_ASCII_TAGS[tag])
-    if exif_off is not None:
-        for tag in _EXIF_DATE_TAGS:
-            if add_ascii(
-                exif_entries,
-                exif_off,
-                tag,
-                _LOCAL_ASCII_TAGS[tag],
-                _EXIF_DT_LEN,
-                "local",
-                "exif-datetime",
-            ):
-                present.add(_LOCAL_ASCII_TAGS[tag])
+    for entries, offset, tags in (
+        (ifd0, ifd0_off, _IFD0_DATE_TAGS),
+        (exif_entries, exif_off, _EXIF_DATE_TAGS),
+    ):
+        if offset is None:
+            continue
+        for tag in tags:
+            add_ascii(
+                entries, offset, tag, _LOCAL_ASCII_TAGS[tag], _EXIF_DT_LEN, "local", _exif_datetime
+            )
     if gps_off is not None:
         add_ascii(
-            gps_entries, gps_off, _TAG_GPS_DATESTAMP, "GPSDateStamp", 11, "utc", "exif-datestamp"
+            gps_entries, gps_off, _TAG_GPS_DATESTAMP, "GPSDateStamp", 11, "utc", _exif_datestamp
         )
         stamp = next((e for e in gps_entries if e.tag == _TAG_GPS_TIMESTAMP), None)
         if stamp is not None and stamp.typ == 5 and stamp.count == 3:
@@ -376,13 +384,12 @@ def scan_jpeg(data: bytes) -> MediaDates:
                         24,
                         "utc",
                         None,  # only meaningful next to GPSDateStamp
-                        "gps-timestamp-be" if endian == ">" else "gps-timestamp-le",
+                        partial(_gps_timestamp, endian),
                     )
                 )
 
-    missing = tuple(
-        name for name in ("DateTime", "DateTimeOriginal", "DateTimeDigitized") if name not in present
-    )
+    found = {f.name for f in fields}
+    missing = tuple(name for name in _DATE_TAG_NAMES if name not in found)
 
     # Rebuilding relocates every value, which silently breaks anything holding
     # TIFF-absolute offsets of its own. Rather than guess, refuse those files.
@@ -427,9 +434,9 @@ def _serialise_ifd(entries: list[Entry], endian: str, value_at: int) -> tuple[by
     return bytes(out), bytes(values), value_at + len(values)
 
 
-def build_tiff(exif: JpegExif, endian: str | None = None) -> bytes:
+def build_tiff(exif: JpegExif) -> bytes:
     """Re-serialise a parsed Exif block into a fresh, self-consistent TIFF."""
-    endian = endian or exif.endian
+    endian = exif.endian
     ifd0 = [e for e in exif.ifd0 if e.tag not in (_TAG_EXIF_IFD, _TAG_GPS_IFD)]
 
     off_ifd0 = 8
@@ -455,7 +462,7 @@ def build_tiff(exif: JpegExif, endian: str | None = None) -> bytes:
 
 
 def _ascii_entry(tag: int, value: datetime) -> Entry:
-    return Entry(tag, 2, _EXIF_DT_LEN, _encode("exif-datetime", value, _EXIF_DT_LEN))
+    return Entry(tag, 2, _EXIF_DT_LEN, _exif_datetime(value))
 
 
 def rebuild_jpeg(data: bytes, dates: MediaDates, local: datetime, utc: datetime) -> bytes:
@@ -486,7 +493,7 @@ def rebuild_jpeg(data: bytes, dates: MediaDates, local: datetime, utc: datetime)
     put(exif_ifd, _TAG_DATETIME_DIGITIZED, local)
     if any(e.tag == _TAG_GPS_DATESTAMP for e in gps):
         gps = [e for e in gps if e.tag != _TAG_GPS_DATESTAMP]
-        gps.append(Entry(_TAG_GPS_DATESTAMP, 2, 11, _encode("exif-datestamp", utc, 11)))
+        gps.append(Entry(_TAG_GPS_DATESTAMP, 2, 11, _exif_datestamp(utc)))
 
     tiff = build_tiff(JpegExif(exif.endian, ifd0, exif_ifd, gps, None, None))
     payload = b"Exif\x00\x00" + tiff
@@ -546,7 +553,7 @@ def _header_box_field(fh, name: str, body: int, limit: int) -> DateField:
             current = (_QT_EPOCH + timedelta(seconds=seconds)).replace(tzinfo=None)
         except OverflowError:
             current = None
-    return DateField(name, at, width, "utc", current, "qt-time")
+    return DateField(name, at, width, "utc", current, _qt_time, ambiguous_clock=True)
 
 
 def _day_atom_field(fh, body: int, limit: int) -> DateField | None:
@@ -563,7 +570,9 @@ def _day_atom_field(fh, body: int, limit: int) -> DateField | None:
             continue
         if current.tzinfo is not None:
             current = current.astimezone(UTC).replace(tzinfo=None)
-        return DateField("day", body, limit - body, "utc", current, "qt-day")
+        return DateField(
+            "day", body, limit - body, "utc", current, _qt_day, ambiguous_clock=True
+        )
     return None
 
 
@@ -609,7 +618,7 @@ def scan_mp4(fh, size: int) -> MediaDates:
 
 
 def kind_for(path) -> str:
-    ext = os.path.splitext(str(path))[1].lower()
+    ext = split_ext(str(path))[1].lower()
     if ext in _JPEG_EXTS:
         return "jpeg"
     if ext in _MP4_EXTS:
@@ -630,9 +639,10 @@ def read_dates(path) -> MediaDates:
 @dataclass
 class ApplyResult:
     written: list[str] = field(default_factory=list)
-    added: list[str] = field(default_factory=list)
     rebuilt: bool = False
-    size: int | None = None  # the file's size afterwards, when it changed
+    # md5 of the bytes just written, when a rebuild had the whole file in hand
+    # anyway. Saves reading a repaired photo back over the network to hash it.
+    digest: str | None = None
 
 
 def apply_dates(path, local: datetime, utc: datetime, dates: MediaDates) -> ApplyResult:
@@ -646,9 +656,7 @@ def apply_dates(path, local: datetime, utc: datetime, dates: MediaDates) -> Appl
     writes: list[tuple[int, bytes, str]] = []
     for f in dates.fields:
         value = local if f.clock == "local" else utc
-        raw = _encode_day(value, f.length) if f.encoder == "qt-day" else _encode(
-            f.encoder, value, f.length
-        )
+        raw = f.encoder(value, f.length)
         if raw is None or len(raw) != f.length:
             continue
         writes.append((f.offset, raw, f.name))
@@ -673,7 +681,7 @@ def _rebuild_in_place(path, local: datetime, utc: datetime, dates: MediaDates) -
     # itself must be untouched -- a rebuild that fails either is not written.
     check = scan_jpeg(rebuilt)
     got = {f.name: f.current for f in check.fields}
-    for name in ("DateTime", "DateTimeOriginal", "DateTimeDigitized"):
+    for name in _DATE_TAG_NAMES:
         if got.get(name) != local:
             raise MalformedMedia(f"rebuilt Exif did not read back {name} correctly")
     if _image_body(rebuilt) != _image_body(original):
@@ -694,12 +702,7 @@ def _rebuild_in_place(path, local: datetime, utc: datetime, dates: MediaDates) -
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
-    return ApplyResult(
-        written=sorted(got),
-        added=list(dates.missing),
-        rebuilt=True,
-        size=len(rebuilt),
-    )
+    return ApplyResult(written=sorted(got), rebuilt=True, digest=hashlib.md5(rebuilt).hexdigest())
 
 
 def _image_body(data: bytes) -> bytes:
