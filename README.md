@@ -376,6 +376,43 @@ gopro-dl sync --since 2020-01-01 --until 2022-12-31
 The manifest tracks what is already done, so batches never overlap and nothing
 is fetched twice.
 
+## Running in Docker
+
+A `Dockerfile` and `docker-compose.example.yml` are included, aimed at
+running `gopro-dl` on a NAS (this was written with a UGREEN NAS's Docker
+support in mind, but any Docker host works the same way).
+
+```bash
+cp docker-compose.example.yml docker-compose.yml
+# edit the two host paths in it: your config dir and your NAS media path
+```
+
+The interactive `setup` wizard opens a real browser window to log in, which
+doesn't work in a headless container. Run it on a machine with a display
+instead, then copy what it wrote into the folder you're about to mount:
+
+```bash
+gopro-dl setup --dest /path/that/matches/your/GOPRO_DEST
+cp ~/Library/Application\ Support/gopro-dl/{token,config.env} ./gopro-dl-config/
+```
+
+Then bring the container up:
+
+```bash
+docker compose up -d --build
+```
+
+By default it runs `gopro-dl sync --non-interactive` once and exits. Set
+`GOPRO_DL_CRON_SCHEDULE` (standard 5-field cron syntax, e.g. `"0 3 * * *"`
+for daily at 03:00) to instead have the container install that as a cron
+job and stay running as a scheduler — `docker compose logs -f` shows each
+run's output. This is a container-only setting read by the entrypoint
+script, not one of `gopro-dl`'s own `GOPRO_*` config variables.
+
+Everything else is configured the normal way, via environment variables in
+the compose file (`GOPRO_DEST`, `GOPRO_DL_HOME`, `GOPRO_TIMEZONE`, ...) or
+the `config.env` you copied in — see `.env.example` for the full list.
+
 ## API notes (things that will bite you)
 
 Established by inspecting a real account. Each of these caused a bug that
