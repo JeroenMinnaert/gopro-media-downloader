@@ -7,6 +7,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
+from rich.console import Console
 from rich.logging import RichHandler
 
 LOGGER_NAME = "gopro_dl"
@@ -27,7 +28,9 @@ class JsonLinesFormatter(logging.Formatter):
         return json.dumps(payload, default=str, separators=(",", ":"))
 
 
-def setup_logging(log_dir: Path, quiet: bool = False, verbose: bool = False) -> Path:
+def setup_logging(
+    log_dir: Path, console: Console, quiet: bool = False, verbose: bool = False
+) -> Path:
     """Configure logging; returns the path of this run's JSONL log."""
     log_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -43,10 +46,10 @@ def setup_logging(log_dir: Path, quiet: bool = False, verbose: bool = False) -> 
     file_handler.setFormatter(JsonLinesFormatter())
     logger.addHandler(file_handler)
 
-    console = RichHandler(rich_tracebacks=True, show_path=False, show_time=False)
-    console.setLevel(logging.WARNING if quiet else (logging.DEBUG if verbose else logging.INFO))
-    console.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(console)
+    rich_handler = RichHandler(console=console, rich_tracebacks=True, show_path=False, show_time=False)
+    rich_handler.setLevel(logging.WARNING if quiet else (logging.DEBUG if verbose else logging.INFO))
+    rich_handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(rich_handler)
 
     return log_path
 

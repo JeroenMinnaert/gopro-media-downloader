@@ -627,7 +627,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         log_path = setup_logging(
-            config.log_dir, quiet=config.quiet, verbose=getattr(args, "verbose", False)
+            config.log_dir, console, quiet=config.quiet, verbose=getattr(args, "verbose", False)
         )
     except OSError as exc:
         console.print(f"[red]Cannot write logs to {config.log_dir}: {exc}[/red]")
