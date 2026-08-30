@@ -55,13 +55,25 @@ point from outside the source tree and checks that a clean environment (no
 
 A separate workflow (`.github/workflows/docker-publish.yml`) builds the
 `Dockerfile` (linux/amd64 + linux/arm64) and pushes it to Docker Hub as
-`<DOCKERHUB_USERNAME>/gopro-media-downloader:latest` and `:<sha>` on every
-push to `main` that touches `Dockerfile`, `docker/`, `src/`, or
-`pyproject.toml` (or via manual dispatch). It authenticates with the repo
-secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access
-token, not the account password) — create the target repository on Docker
-Hub as Private *before* the first push, since Docker Hub does not
-necessarily default a new, auto-created repository to private.
+`<DOCKERHUB_USERNAME>/gopro-media-downloader:latest` and `:<sha>`. It
+triggers via `workflow_run` on the `CI` workflow finishing on `main` (or via
+manual dispatch), and only pushes when that CI run's conclusion was
+`success` — a broken test matrix never reaches Docker Hub. Because of this,
+it always publishes after a successful `main` CI run rather than only when
+Docker-relevant paths changed (dropped in favor of the simpler,
+harder-to-get-wrong gate). It authenticates with the repo secrets
+`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token, not
+the account password) — create the target repository on Docker Hub as
+Private *before* the first push, since Docker Hub does not necessarily
+default a new, auto-created repository to private.
+
+A third workflow (`.github/workflows/release.yml`) builds and publishes to
+PyPI via trusted publishing (OIDC, no token) on a `v*` tag push. Its `test`
+job calls `ci.yml` as a reusable workflow (`workflow_call`) so a tag gets
+the exact same lint + full OS/Python matrix as a normal push to `main` —
+tags aren't otherwise covered by `ci.yml`'s own triggers. `build` `needs:
+test` and `publish` `needs: build`, so nothing reaches PyPI unless that
+whole suite passes first.
 
 ## Architecture
 
