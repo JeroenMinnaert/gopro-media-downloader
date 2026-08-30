@@ -6,6 +6,7 @@ network or the filesystem.
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import UTC, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -89,10 +90,7 @@ def safe_filename(filename: str, fallback: str) -> str:
 
 
 def split_ext(filename: str) -> tuple[str, str]:
-    if "." in filename[1:]:
-        stem, _, ext = filename.rpartition(".")
-        return stem, f".{ext}"
-    return filename, ""
+    return os.path.splitext(filename)
 
 
 def suffixed(filename: str, media_id: str, length: int = 6) -> str:

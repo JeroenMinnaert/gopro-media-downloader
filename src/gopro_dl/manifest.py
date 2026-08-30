@@ -272,11 +272,12 @@ class Manifest:
         include_failed: bool = True,
         max_attempts: int = 4,
         types: tuple[str, ...] | None = None,
+        columns: str = "i.*",
     ) -> list[sqlite3.Row]:
         """Items with outstanding work, oldest capture first."""
         states = ["pending", "resolved"] + (["failed"] if include_failed else [])
         sql = f"""
-            SELECT i.* FROM media_items i
+            SELECT {columns} FROM media_items i
             WHERE i.skip_reason IS NULL
               AND i.state IN ({','.join('?' * len(states))})
               AND i.attempts < ?

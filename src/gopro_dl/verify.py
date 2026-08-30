@@ -6,7 +6,7 @@ import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .integrity import etag_for_file
+from .integrity import MIB, etag_for_file
 from .manifest import Manifest
 
 
@@ -30,7 +30,7 @@ def file_hash(path: Path, algo: str) -> str | None:
     except ValueError:
         return None
     with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+        for chunk in iter(lambda: fh.read(MIB), b""):
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -38,24 +38,28 @@ def file_hash(path: Path, algo: str) -> str | None:
 def verify(manifest: Manifest, dest: Path, deep: bool = False, fix: bool = False) -> VerifyReport:
     """Re-check every file the manifest believes is done."""
     report = VerifyReport()
+
+    def requeue(row, path: Path | None = None) -> None:
+        if not fix:
+            return
+        if path is not None:
+            path.unlink()
+        manifest.reset_file(row["id"])
+        manifest.refresh_item_state(row["media_id"])
+
     for row in manifest.all_files(states=["done"]):
         report.checked += 1
         path = dest / row["target_path"]
         if not path.exists():
             report.missing.append(row["target_path"])
-            if fix:
-                manifest.reset_file(row["id"])
-                manifest.refresh_item_state(row["media_id"])
+            requeue(row)
             continue
 
         actual = path.stat().st_size
         expected = row["expected_size"]
         if expected and actual != expected:
             report.wrong_size.append((row["target_path"], actual, expected))
-            if fix:
-                path.unlink()
-                manifest.reset_file(row["id"])
-                manifest.refresh_item_state(row["media_id"])
+            requeue(row, path)
             continue
 
         if not expected:
@@ -67,10 +71,7 @@ def verify(manifest: Manifest, dest: Path, deep: bool = False, fix: bool = False
             verdict = etag_for_file(path, row["checksum"])
             if verdict == "mismatch":
                 report.bad_checksum.append(row["target_path"])
-                if fix:
-                    path.unlink()
-                    manifest.reset_file(row["id"])
-                    manifest.refresh_item_state(row["media_id"])
+                requeue(row, path)
                 continue
             if verdict is None:
                 report.unverifiable.append(row["target_path"])
@@ -78,10 +79,7 @@ def verify(manifest: Manifest, dest: Path, deep: bool = False, fix: bool = False
             digest = file_hash(path, row["checksum_algo"])
             if digest and digest.lower() != str(row["checksum"]).lower():
                 report.bad_checksum.append(row["target_path"])
-                if fix:
-                    path.unlink()
-                    manifest.reset_file(row["id"])
-                    manifest.refresh_item_state(row["media_id"])
+                requeue(row, path)
                 continue
 
         report.ok += 1

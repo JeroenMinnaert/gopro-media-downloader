@@ -8,7 +8,6 @@ and releases everyone. Nothing is lost and nothing is re-downloaded.
 
 from __future__ import annotations
 
-import json
 import logging
 import queue
 import threading
@@ -54,7 +53,9 @@ def refresh_manifest(
 ) -> None:
     """Page through the library and bring the manifest up to date."""
     console.print("[bold]Enumerating media library...[/bold]")
-    seen_before = {row["id"] for row in manifest.pending_items(max_attempts=10**9)}
+    seen_before = {
+        row["id"] for row in manifest.pending_items(max_attempts=10**9, columns="i.id")
+    }
 
     def on_page(page: int, total: int) -> None:
         console.print(f"  page {page}/{total}", highlight=False)
@@ -144,7 +145,7 @@ class DownloadRunner:
     # -- worker ------------------------------------------------------------
 
     def _process_item(self, row) -> None:
-        item = MediaItem.from_json(json.loads(row["raw_json"]))
+        item = MediaItem.from_row(row)
         folder = row["date_folder"]
 
         if not self.manifest.claim_item(item.id):

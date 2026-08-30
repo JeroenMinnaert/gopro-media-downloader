@@ -7,13 +7,13 @@ byte-for-byte against S3 instead of only checking their size.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 
 import httpx
 
 from .api import ApiError, AuthExpired, GoProClient
+from .integrity import etag_header
 from .logging_setup import log_event
 from .manifest import Manifest
 from .models import MediaItem, parse_download_response
@@ -47,7 +47,7 @@ def backfill_etags(
 
     for media_id, file_rows in by_item.items():
         try:
-            item = MediaItem.from_json(json.loads(file_rows[0]["raw_json"]))
+            item = MediaItem.from_row(file_rows[0])
             sources, skip = parse_download_response(client.get_download(media_id), item)
             if skip:
                 for row in file_rows:
@@ -74,7 +74,7 @@ def backfill_etags(
                 report.failed.append((path, f"HEAD failed: {exc}"))
                 continue
 
-            etag = (head.headers.get("ETag") or "").strip('"')
+            etag = etag_header(head.headers)
             if not etag:
                 report.failed.append((path, "origin returned no ETag"))
                 continue
