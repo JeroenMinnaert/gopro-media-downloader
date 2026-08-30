@@ -48,6 +48,7 @@ def test_non_interactive_refresh_picks_up_a_changed_token_file(tmp_path):
         provider,
         validate=lambda t: t == GOOD,
         console=FakeConsole(lambda: ""),
+        browser_profile_dir=tmp_path / "profile",
         non_interactive=True,
         poll_seconds=0.05,
         timeout_seconds=5,
@@ -55,9 +56,9 @@ def test_non_interactive_refresh_picks_up_a_changed_token_file(tmp_path):
     assert ok and provider.token == GOOD
 
 
-def test_interactive_refresh_finds_a_refreshed_browser_session_silently(monkeypatch):
+def test_interactive_refresh_finds_a_refreshed_browser_session_silently(monkeypatch, tmp_path):
     """A saved browser session that's since refreshed must resume without a prompt."""
-    monkeypatch.setattr(auth_module, "fetch_cached_browser_token", lambda: "fresh-from-browser")
+    monkeypatch.setattr(auth_module, "fetch_cached_browser_token", lambda *a, **k: "fresh-from-browser")
 
     def fail_if_prompted():
         raise AssertionError("should have resumed silently, never reached the prompt")
@@ -67,48 +68,52 @@ def test_interactive_refresh_finds_a_refreshed_browser_session_silently(monkeypa
         provider,
         validate=lambda t: t == "fresh-from-browser",
         console=FakeConsole(fail_if_prompted),
+        browser_profile_dir=tmp_path / "profile",
     )
     assert ok
     assert provider.token == "fresh-from-browser"
 
 
-def test_interactive_refresh_ignores_a_cached_token_identical_to_the_current_one(monkeypatch):
+def test_interactive_refresh_ignores_a_cached_token_identical_to_the_current_one(monkeypatch, tmp_path):
     """No point re-validating the exact token that just got rejected."""
-    monkeypatch.setattr(auth_module, "fetch_cached_browser_token", lambda: EXPIRED)
+    monkeypatch.setattr(auth_module, "fetch_cached_browser_token", lambda *a, **k: EXPIRED)
     provider = TokenProvider(token=EXPIRED)
     answers = iter([GOOD])
     ok = refresh_token_interactively(
         provider,
         validate=lambda t: t == GOOD,
         console=FakeConsole(lambda: next(answers)),
+        browser_profile_dir=tmp_path / "profile",
     )
     assert ok and provider.token == GOOD
 
 
-def test_interactive_refresh_types_b_to_log_into_a_browser(monkeypatch):
-    monkeypatch.setattr(auth_module, "fetch_cached_browser_token", lambda: None)
-    monkeypatch.setattr(auth_module, "login_via_browser", lambda console: "logged-in-token")
+def test_interactive_refresh_types_b_to_log_into_a_browser(monkeypatch, tmp_path):
+    monkeypatch.setattr(auth_module, "fetch_cached_browser_token", lambda *a, **k: None)
+    monkeypatch.setattr(auth_module, "login_via_browser", lambda *a, **k: "logged-in-token")
     provider = TokenProvider(token="stale")
     ok = refresh_token_interactively(
         provider,
         validate=lambda t: t == "logged-in-token",
         console=FakeConsole(lambda: "b"),
+        browser_profile_dir=tmp_path / "profile",
     )
     assert ok
     assert provider.token == "logged-in-token"
 
 
-def test_interactive_refresh_falls_back_to_paste_when_browser_login_fails(monkeypatch):
+def test_interactive_refresh_falls_back_to_paste_when_browser_login_fails(monkeypatch, tmp_path):
     # login_via_browser() never raises -- a failed/declined Chromium install
     # surfaces the same way as a cancelled or timed-out login: None back.
-    monkeypatch.setattr(auth_module, "fetch_cached_browser_token", lambda: None)
-    monkeypatch.setattr(auth_module, "login_via_browser", lambda console: None)
+    monkeypatch.setattr(auth_module, "fetch_cached_browser_token", lambda *a, **k: None)
+    monkeypatch.setattr(auth_module, "login_via_browser", lambda *a, **k: None)
     provider = TokenProvider(token="stale")
     answers = iter(["b", GOOD])  # "b" finds nothing, then a plain paste succeeds
     ok = refresh_token_interactively(
         provider,
         validate=lambda t: t == GOOD,
         console=FakeConsole(lambda: next(answers)),
+        browser_profile_dir=tmp_path / "profile",
     )
     assert ok
     assert provider.token == GOOD

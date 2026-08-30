@@ -128,6 +128,7 @@ def test_ambient_configuration_cannot_redirect_a_run(tmp_path, monkeypatch):
     """Regression: a stray .env/GOPRO_MANIFEST_DIR once pointed tests at a real
     manifest, writing fixture rows into a live library."""
     from gopro_dl.config import load_config
+    from gopro_dl.locations import AppDirs
 
     monkeypatch.setenv("GOPRO_MANIFEST_DIR", "/somewhere/real")
     monkeypatch.setenv("GOPRO_DEST", "/somewhere/real/media")
@@ -137,7 +138,7 @@ def test_ambient_configuration_cannot_redirect_a_run(tmp_path, monkeypatch):
         manifest_dir = str(tmp_path / "state")
         token = "t"
 
-    config = load_config(Args())
+    config = load_config(Args(), AppDirs(root=tmp_path / "app"))
     # explicit arguments must win over the ambient environment
     assert config.manifest_path == tmp_path / "state" / "manifest.db"
     assert config.dest == tmp_path / "dest"

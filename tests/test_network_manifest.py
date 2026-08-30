@@ -13,8 +13,8 @@ import respx
 
 import gopro_dl.cli as cli_module
 from gopro_dl.api import API_HOST
-from gopro_dl.appdirs import DATA_DIR, manifest_dir_for
 from gopro_dl.config import Config, apply_network_manifest_redirect
+from gopro_dl.locations import AppDirs
 from gopro_dl.preflight import is_network_filesystem
 
 
@@ -117,25 +117,27 @@ def test_walks_up_to_the_nearest_existing_ancestor(monkeypatch, tmp_path):
     assert is_network_filesystem(not_yet_created) is True
 
 
-# -- appdirs.manifest_dir_for -----------------------------------------------
+# -- AppDirs.manifest_dir_for ------------------------------------------------
 
 
 def test_manifest_dir_for_is_deterministic(tmp_path):
+    app_dirs = AppDirs(root=tmp_path / "app")
     dest = tmp_path / "GoPro"
     dest.mkdir()
-    first = manifest_dir_for(dest)
-    second = manifest_dir_for(dest)
+    first = app_dirs.manifest_dir_for(dest)
+    second = app_dirs.manifest_dir_for(dest)
     assert first == second
-    assert first.parent == DATA_DIR / "manifests"
+    assert first.parent == app_dirs.root / "manifests"
     assert first.name.startswith("GoPro-")
 
 
 def test_manifest_dir_for_disambiguates_same_named_destinations(tmp_path):
+    app_dirs = AppDirs(root=tmp_path / "app")
     a = tmp_path / "one" / "GoPro"
     b = tmp_path / "two" / "GoPro"
     a.mkdir(parents=True)
     b.mkdir(parents=True)
-    assert manifest_dir_for(a) != manifest_dir_for(b)
+    assert app_dirs.manifest_dir_for(a) != app_dirs.manifest_dir_for(b)
 
 
 # -- config.apply_network_manifest_redirect ---------------------------------
@@ -143,16 +145,17 @@ def test_manifest_dir_for_disambiguates_same_named_destinations(tmp_path):
 
 def test_redirects_when_dest_is_a_network_mount(tmp_path, monkeypatch):
     monkeypatch.setattr("gopro_dl.config.is_network_filesystem", lambda dest: True)
-    config = Config(dest=tmp_path / "GoPro")
+    app_dirs = AppDirs(root=tmp_path / "app")
+    config = Config(dest=tmp_path / "GoPro", app_dirs=app_dirs)
     notice = apply_network_manifest_redirect(config)
     assert notice is not None
     assert "network mount" in notice
-    assert config.manifest_dir == manifest_dir_for(tmp_path / "GoPro")
+    assert config.manifest_dir == app_dirs.manifest_dir_for(tmp_path / "GoPro")
 
 
 def test_does_not_redirect_a_local_destination(tmp_path, monkeypatch):
     monkeypatch.setattr("gopro_dl.config.is_network_filesystem", lambda dest: False)
-    config = Config(dest=tmp_path / "downloads")
+    config = Config(dest=tmp_path / "downloads", app_dirs=AppDirs(root=tmp_path / "app"))
     notice = apply_network_manifest_redirect(config)
     assert notice is None
     assert config.manifest_dir is None
@@ -161,7 +164,9 @@ def test_does_not_redirect_a_local_destination(tmp_path, monkeypatch):
 def test_an_explicit_manifest_dir_always_wins(tmp_path, monkeypatch):
     monkeypatch.setattr("gopro_dl.config.is_network_filesystem", lambda dest: True)
     chosen = tmp_path / "my-local-state"
-    config = Config(dest=tmp_path / "GoPro", manifest_dir=chosen)
+    config = Config(
+        dest=tmp_path / "GoPro", app_dirs=AppDirs(root=tmp_path / "app"), manifest_dir=chosen
+    )
     notice = apply_network_manifest_redirect(config)
     assert notice is None
     assert config.manifest_dir == chosen
@@ -179,7 +184,7 @@ def test_an_already_colocated_manifest_is_never_redirected(tmp_path, monkeypatch
         raise AssertionError("is_network_filesystem must not be called")
 
     monkeypatch.setattr("gopro_dl.config.is_network_filesystem", fail_if_called)
-    config = Config(dest=dest)
+    config = Config(dest=dest, app_dirs=AppDirs(root=tmp_path / "app"))
     notice = apply_network_manifest_redirect(config)
     assert notice is None
     assert config.manifest_dir is None
@@ -198,7 +203,7 @@ def test_redirect_check_runs_for_a_manifest_command(tmp_path, monkeypatch):
 def test_redirect_check_is_skipped_for_setup_and_token(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(cli_module, "apply_network_manifest_redirect", lambda config: calls.append(1))
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: None)
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: None)
     monkeypatch.setattr(cli_module.console, "input", lambda *a, **k: "")
 
     with respx.mock:

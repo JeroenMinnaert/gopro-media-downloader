@@ -82,43 +82,38 @@ def _patch_playwright(monkeypatch, chromium):
     monkeypatch.setattr(playwright.sync_api, "sync_playwright", lambda: FakeSyncPlaywright(chromium))
 
 
-def test_fetch_cached_returns_none_without_a_profile_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(browser_login, "PROFILE_DIR", tmp_path / "does-not-exist")
-    assert fetch_cached() is None
+def test_fetch_cached_returns_none_without_a_profile_dir(tmp_path):
+    assert fetch_cached(tmp_path / "does-not-exist") is None
 
 
 def test_fetch_cached_extracts_the_cookie(tmp_path, monkeypatch):
     profile = tmp_path / "profile"
     profile.mkdir()
-    monkeypatch.setattr(browser_login, "PROFILE_DIR", profile)
     cookies = [{"name": "other", "value": "x"}, {"name": "gp_access_token", "value": "cached-value"}]
     _patch_playwright(monkeypatch, FakeChromium(context=FakeContext([cookies])))
-    assert fetch_cached() == "cached-value"
+    assert fetch_cached(profile) == "cached-value"
 
 
 def test_fetch_cached_ignores_launch_failures(tmp_path, monkeypatch):
     profile = tmp_path / "profile"
     profile.mkdir()
-    monkeypatch.setattr(browser_login, "PROFILE_DIR", profile)
     _patch_playwright(monkeypatch, FakeChromium(raise_exc=RuntimeError("boom")))
-    assert fetch_cached() is None
+    assert fetch_cached(profile) is None
 
 
 def test_fetch_cached_reraises_a_playwright_error_unrelated_to_installation(tmp_path, monkeypatch):
     profile = tmp_path / "profile"
     profile.mkdir()
-    monkeypatch.setattr(browser_login, "PROFILE_DIR", profile)
     exc = RealPlaywrightError("some other failure entirely")
     _patch_playwright(monkeypatch, FakeChromium(raise_exc=exc))
     # fetch_cached's outer try/except still swallows it -- only _launch's own
     # re-raise-if-unrelated branch is what this exercises.
-    assert fetch_cached() is None
+    assert fetch_cached(profile) is None
 
 
 def test_fetch_cached_never_triggers_an_install(tmp_path, monkeypatch):
     profile = tmp_path / "profile"
     profile.mkdir()
-    monkeypatch.setattr(browser_login, "PROFILE_DIR", profile)
 
     def fail_if_called(console):
         raise AssertionError("fetch_cached must never install the browser")
@@ -128,7 +123,7 @@ def test_fetch_cached_never_triggers_an_install(tmp_path, monkeypatch):
         "BrowserType.launch_persistent_context: Executable doesn't exist at /nope"
     )
     _patch_playwright(monkeypatch, FakeChromium(raise_exc=exc))
-    assert fetch_cached() is None
+    assert fetch_cached(profile) is None
 
 
 def test_install_chromium_reports_subprocess_success(monkeypatch):
@@ -156,7 +151,6 @@ def test_install_chromium_handles_a_missing_playwright_cli(monkeypatch):
 
 
 def test_login_installs_chromium_then_retries_and_succeeds(tmp_path, monkeypatch):
-    monkeypatch.setattr(browser_login, "PROFILE_DIR", tmp_path / "profile")
     monkeypatch.setattr(browser_login.time, "sleep", lambda _: None)
     exc = RealPlaywrightError(
         "BrowserType.launch_persistent_context: Executable doesn't exist at /nope"
@@ -172,36 +166,33 @@ def test_login_installs_chromium_then_retries_and_succeeds(tmp_path, monkeypatch
 
     monkeypatch.setattr(browser_login, "_install_chromium", fake_install)
 
-    assert login(console=FakeConsole()) == "fresh"
+    assert login(FakeConsole(), tmp_path / "profile") == "fresh"
     assert installed == [1]
     assert chromium.calls == 2
 
 
 def test_login_returns_none_when_auto_install_fails(tmp_path, monkeypatch):
-    monkeypatch.setattr(browser_login, "PROFILE_DIR", tmp_path / "profile")
     monkeypatch.setattr(browser_login, "_install_chromium", lambda console: False)
     exc = RealPlaywrightError(
         "BrowserType.launch_persistent_context: Executable doesn't exist at /nope"
     )
     _patch_playwright(monkeypatch, FakeChromium(raise_exc=exc))
-    assert login(console=FakeConsole()) is None
+    assert login(FakeConsole(), tmp_path / "profile") is None
 
 
 def test_login_polls_until_the_cookie_appears(tmp_path, monkeypatch):
-    monkeypatch.setattr(browser_login, "PROFILE_DIR", tmp_path / "profile")
     monkeypatch.setattr(browser_login.time, "sleep", lambda _: None)
     sequence = [[], [], [{"name": "gp_access_token", "value": "fresh"}]]
     context = FakeContext(cookie_sequence=sequence)
     _patch_playwright(monkeypatch, FakeChromium(context=context))
 
-    assert login(console=FakeConsole()) == "fresh"
+    assert login(FakeConsole(), tmp_path / "profile") == "fresh"
     assert context.closed
 
 
 def test_login_returns_none_when_the_window_is_closed(tmp_path, monkeypatch):
-    monkeypatch.setattr(browser_login, "PROFILE_DIR", tmp_path / "profile")
     monkeypatch.setattr(browser_login.time, "sleep", lambda _: None)
     context = FakeContext(raise_on_cookies=True)
     _patch_playwright(monkeypatch, FakeChromium(context=context))
 
-    assert login(console=FakeConsole()) is None
+    assert login(FakeConsole(), tmp_path / "profile") is None

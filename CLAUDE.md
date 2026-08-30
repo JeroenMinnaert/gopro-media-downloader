@@ -30,14 +30,14 @@ python3 -m venv .venv
 .venv/bin/gopro-dl sync --dry-run --limit 5
 ```
 
-This editable install auto-detects that it's running from a source checkout
-(`appdirs.py: _source_checkout_root()`) and keeps the token, config file,
-browser-login profile, manifests, and default destination inside
-`<repo>/.dev-state/` (gitignored) instead of your real `~/Library/Application
-Support`/`~/Downloads` -- nothing to set by hand. Only ever true for an
-editable install; a real `pipx`/`pip` install of the built package always
-resolves into site-packages instead, so end users are unaffected. Override
-the location explicitly with `GOPRO_DL_HOME=/some/path` if you ever need to.
+Local dev: `direnv allow` once (the checked-in `.envrc` exports
+`GOPRO_DL_HOME=$PWD/.dev-state`, gitignored) so the token, config file, and
+browser-login profile land inside the repo instead of your real
+`~/Library/Application Support`. Without direnv, export it yourself, or skip
+it and accept the real OS locations -- there is no dev-mode detection in the
+code (`locations.py: AppDirs.resolve()`); `GOPRO_DL_HOME` unset always means
+the real per-user location, set always means exactly that path, in dev or
+prod alike.
 
 Tests are fully mocked (respx for HTTP) — no network access or real GoPro
 token needed to run the suite. Fixtures live in `tests/fixtures/`.
@@ -107,16 +107,21 @@ this ordering is load-bearing for not losing work.
 - macOS `smbfs` truncates `statvfs` block counts to 32 bits, so
   `preflight.py` shells out to `df` for free-space checks instead of using
   `shutil.disk_usage` — this is the reason CI runs on macOS at all.
-- Config precedence is flag → env var → `.env` → default (`config.py`).
+- Config precedence is flag → env var → config file → default (`config.py`).
+  The config file's own location is a separate, one-variable question
+  (`GOPRO_DL_HOME` set or unset — see `locations.py`), resolved once in
+  `cli.py: main()` and carried on `Config.app_dirs` from there; nothing else
+  in the codebase decides where gopro-dl's state lives.
 - `preflight.py: is_network_filesystem()` detects a network `--dest` (`mount`
   on macOS, `df --output=fstype` on Linux) so `config.py:
   apply_network_manifest_redirect()` can steer the manifest/logs onto local
   disk automatically — SMB/NFS silently corrupt SQLite's WAL journal. Only
   applies when `--manifest-dir` wasn't given explicitly, and only runs for
-  the commands that actually open the manifest (`cli.py: MANIFEST_COMMANDS`);
-  fails open (assumes local) on any detection error.
+  the commands that actually open the manifest (`cli.py: build_parser()`'s
+  `needs_manifest` flag, set per-subcommand via `common()`); fails open
+  (assumes local) on any detection error.
 - Two unrelated storage roots, do not conflate them: `<dest>/.gopro-dl/`
   (`config.py`) is the per-destination manifest/log dir and travels with a
-  given `--dest`; `appdirs.py` (`platformdirs`-based) is the tool's own
-  global, per-user state — the saved token and the persisted Playwright
-  browser-login profile (`browser_login.py`).
+  given `--dest`; `locations.py: AppDirs` (`platformdirs`-based) is the
+  tool's own global, per-user state — the saved token, its config file, and
+  the persisted Playwright browser-login profile (`browser_login.py`).

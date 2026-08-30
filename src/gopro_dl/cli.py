@@ -14,13 +14,13 @@ from rich.console import Console
 from rich.table import Table
 
 from .api import AuthExpired, GoProClient
-from .appdirs import DEFAULT_ENV_FILE
 from .auth import AuthGate, TokenError, TokenProvider, token_instructions
 from .backfill import backfill_etags
 from .browser_login import fetch_cached as fetch_cached_browser_token
 from .browser_login import login as login_via_browser
 from .circuit import CircuitBreaker
 from .config import Config, apply_network_manifest_redirect, load_config
+from .locations import AppDirs
 from .logging_setup import log_event, setup_logging
 from .manifest import Manifest
 from .paths import parse_timezone
@@ -115,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     common(setup, needs_manifest=False)
     setup.add_argument(
-        "--force", action="store_true", help="overwrite an existing token file or .env"
+        "--force", action="store_true", help="overwrite an existing token file or config"
     )
     setup.add_argument(
         "--no-browser",
@@ -239,14 +239,14 @@ def cmd_setup(config: Config, args) -> int:
 
     if not token and not args.no_browser:
         console.print("[dim]Checking for a saved GoPro browser session...[/dim]")
-        cached = fetch_cached_browser_token()
+        cached = fetch_cached_browser_token(config.app_dirs.browser_profile)
         if cached and (account := _validate_token(config, cached)) is not None:
             token, source = cached, "a saved browser session"
         elif cached:
             console.print("[dim]That session has expired.[/dim]")
 
     if not token and not args.no_browser:
-        fresh = login_via_browser(console)
+        fresh = login_via_browser(console, config.app_dirs.browser_profile)
         if fresh and (account := _validate_token(config, fresh)) is not None:
             token, source = fresh, "browser login"
 
@@ -277,8 +277,12 @@ def cmd_setup(config: Config, args) -> int:
         write_token = answer.lower() == "y"
 
     if write_token:
+        parent_already_existed = token_file.parent.exists()
         token_file.parent.mkdir(parents=True, exist_ok=True)
-        token_file.parent.chmod(0o700)
+        if not parent_already_existed:
+            # Never chmod a directory we didn't create -- --token-file
+            # ~/mytoken would otherwise chmod the user's actual home dir.
+            token_file.parent.chmod(0o700)
         token_file.write_text(token + "\n", encoding="utf-8")
         token_file.chmod(0o600)
         console.print(f"[green]Wrote[/green] {token_file} (chmod 600)")
@@ -310,7 +314,7 @@ def cmd_setup(config: Config, args) -> int:
             console.print(f"[yellow]Ignoring timezone {tz_name!r}: {exc}[/yellow]")
             tz_name = ""
 
-    env_path = DEFAULT_ENV_FILE
+    env_path = config.app_dirs.config_file
     if env_path.exists() and not args.force:
         console.print(
             f"\n[dim]{env_path} already exists - leaving it as is. Make sure it has:\n"
@@ -615,7 +619,7 @@ def cmd_retry(config: Config) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        config = load_config(args)
+        config = load_config(args, AppDirs.resolve())
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         return 1

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .appdirs import DEFAULT_ENV_FILE, DEFAULT_TOKEN_FILE, default_dest, manifest_dir_for
+from .locations import AppDirs, default_dest
 from .models import DEFAULT_TYPES
 from .paths import parse_timezone
 from .preflight import is_network_filesystem
@@ -21,6 +21,7 @@ MAX_CONCURRENCY = 8
 @dataclass
 class Config:
     dest: Path
+    app_dirs: AppDirs
     token: str | None = None
     token_file: Path | None = None
     user_id: str | None = None
@@ -53,20 +54,19 @@ def _expand(value: str | None) -> Path | None:
     return Path(value).expanduser() if value else None
 
 
-def load_config(args) -> Config:
+def load_config(args, app_dirs: AppDirs) -> Config:
     """Build a Config from parsed CLI args, environment and the config file.
 
-    The config file lives next to the token, at DEFAULT_ENV_FILE -- one
-    fixed location regardless of which directory gopro-dl is run from,
-    rather than a `.env` that only applies from the directory it was
-    written in.
+    `app_dirs` is resolved once by the caller (cli.py: main()) -- this
+    function never decides where gopro-dl's own state lives, only where a
+    single run's settings come from.
     """
-    load_dotenv(DEFAULT_ENV_FILE, override=False)
+    load_dotenv(app_dirs.config_file, override=False)
 
     dest = _expand(getattr(args, "dest", None) or _env("GOPRO_DEST")) or default_dest()
     token_file = (
         _expand(getattr(args, "token_file", None) or _env("GOPRO_TOKEN_FILE"))
-        or DEFAULT_TOKEN_FILE
+        or app_dirs.token_file
     )
 
     concurrency = getattr(args, "concurrency", None)
@@ -95,6 +95,7 @@ def load_config(args) -> Config:
 
     return Config(
         dest=dest,
+        app_dirs=app_dirs,
         fallback_timezone=fallback_tz,
         token=getattr(args, "token", None) or _env("GOPRO_TOKEN"),
         token_file=token_file,
@@ -125,7 +126,7 @@ def apply_network_manifest_redirect(config: Config) -> str | None:
         return None
     if not is_network_filesystem(config.dest):
         return None
-    config.manifest_dir = manifest_dir_for(config.dest)
+    config.manifest_dir = config.app_dirs.manifest_dir_for(config.dest)
     return (
         f"{config.dest} looks like a network mount -- keeping the manifest and logs "
         f"locally at {config.manifest_dir} instead (SMB/NFS can corrupt SQLite's WAL "

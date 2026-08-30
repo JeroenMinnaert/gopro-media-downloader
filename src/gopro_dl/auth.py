@@ -138,6 +138,7 @@ def refresh_token_interactively(
     provider: TokenProvider,
     validate,
     console,
+    browser_profile_dir: Path,
     non_interactive: bool = False,
     poll_seconds: float = 30.0,
     timeout_seconds: float = 3600.0,
@@ -172,7 +173,7 @@ def refresh_token_interactively(
         # A free, silent check: if a saved browser session has since
         # refreshed (or the user logged back in elsewhere), this beats
         # making them do anything at all.
-        cached = fetch_cached_browser_token()
+        cached = fetch_cached_browser_token(browser_profile_dir)
         if cached and cached != provider.token:
             console.print("[dim]Found a saved browser session - trying it.[/dim]")
             provider.set(cached)
@@ -190,7 +191,7 @@ def refresh_token_interactively(
             return False
 
         if answer.lower() == "b":
-            fresh = login_via_browser(console)
+            fresh = login_via_browser(console, browser_profile_dir)
             if fresh:
                 provider.set(fresh)
         elif answer:

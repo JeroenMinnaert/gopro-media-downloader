@@ -11,8 +11,8 @@ from gopro_dl.cli import _detect_timezone, main
 
 
 def _env_path(tmp_path):
-    """Matches conftest.py's isolate_environment redirect of DEFAULT_ENV_FILE."""
-    return tmp_path / "unset-config.env"
+    """Matches conftest.py's isolate_environment redirect of AppDirs.resolve()."""
+    return tmp_path / "unset-app-dir" / "config.env"
 
 
 def _run_setup(tmp_path, *extra_args, token_file=None, dest=None, with_timezone=True, with_dest=True):
@@ -37,7 +37,7 @@ def _validate_only(good_token):
 
 
 def test_uses_a_cached_browser_session_without_prompting(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
     monkeypatch.chdir(tmp_path)
     with respx.mock:
         _validate_ok()
@@ -51,8 +51,8 @@ def test_uses_a_cached_browser_session_without_prompting(tmp_path, monkeypatch):
 
 
 def test_falls_back_to_browser_login_when_no_cached_session(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: None)
-    monkeypatch.setattr(cli_module, "login_via_browser", lambda console: "logged-in-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: None)
+    monkeypatch.setattr(cli_module, "login_via_browser", lambda *a, **k: "logged-in-token")
     monkeypatch.chdir(tmp_path)
     with respx.mock:
         _validate_ok()
@@ -62,8 +62,8 @@ def test_falls_back_to_browser_login_when_no_cached_session(tmp_path, monkeypatc
 
 
 def test_expired_cached_session_falls_back_to_browser_login(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "stale-token")
-    monkeypatch.setattr(cli_module, "login_via_browser", lambda console: "fresh-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "stale-token")
+    monkeypatch.setattr(cli_module, "login_via_browser", lambda *a, **k: "fresh-token")
     monkeypatch.chdir(tmp_path)
     with respx.mock:
         _validate_only("fresh-token")
@@ -73,8 +73,8 @@ def test_expired_cached_session_falls_back_to_browser_login(tmp_path, monkeypatc
 
 
 def test_falls_back_to_manual_paste_when_browser_login_is_cancelled(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: None)
-    monkeypatch.setattr(cli_module, "login_via_browser", lambda console: None)  # window closed / timed out
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: None)
+    monkeypatch.setattr(cli_module, "login_via_browser", lambda *a, **k: None)  # window closed / timed out
     monkeypatch.setattr(cli_module.console, "input", lambda *a, **k: "pasted-token")
     monkeypatch.chdir(tmp_path)
     with respx.mock:
@@ -87,8 +87,8 @@ def test_falls_back_to_manual_paste_when_browser_login_is_cancelled(tmp_path, mo
 def test_browser_not_installed_falls_back_to_manual_paste(tmp_path, monkeypatch):
     # login_via_browser() never raises BrowserNotInstalled -- it handles that
     # itself and returns None, same as any other failed/cancelled login.
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: None)
-    monkeypatch.setattr(cli_module, "login_via_browser", lambda console: None)
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: None)
+    monkeypatch.setattr(cli_module, "login_via_browser", lambda *a, **k: None)
     monkeypatch.setattr(cli_module.console, "input", lambda *a, **k: "pasted-token")
     monkeypatch.chdir(tmp_path)
     with respx.mock:
@@ -116,7 +116,7 @@ def test_no_browser_flag_skips_cache_and_login_entirely(tmp_path, monkeypatch):
 def test_does_not_overwrite_an_existing_token_file_without_confirmation(tmp_path, monkeypatch):
     token_file = tmp_path / "tok"
     token_file.write_text("original-token")
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
     monkeypatch.setattr(cli_module.console, "input", lambda *a, **k: "n")  # decline overwrite
     monkeypatch.chdir(tmp_path)
     with respx.mock:
@@ -129,8 +129,9 @@ def test_does_not_overwrite_an_existing_token_file_without_confirmation(tmp_path
 def test_force_overwrites_existing_token_file_and_env(tmp_path, monkeypatch):
     token_file = tmp_path / "tok"
     token_file.write_text("original-token")
+    _env_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
     _env_path(tmp_path).write_text("STALE=1\n")
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
     monkeypatch.chdir(tmp_path)
     with respx.mock:
         _validate_ok()
@@ -141,8 +142,8 @@ def test_force_overwrites_existing_token_file_and_env(tmp_path, monkeypatch):
 
 
 def test_cancelling_the_manual_paste_prompt_aborts_cleanly(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: None)
-    monkeypatch.setattr(cli_module, "login_via_browser", lambda console: None)
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: None)
+    monkeypatch.setattr(cli_module, "login_via_browser", lambda *a, **k: None)
 
     def raise_eof(*a, **k):
         raise EOFError
@@ -155,8 +156,8 @@ def test_cancelling_the_manual_paste_prompt_aborts_cleanly(tmp_path, monkeypatch
 
 
 def test_an_empty_manual_paste_is_rejected(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: None)
-    monkeypatch.setattr(cli_module, "login_via_browser", lambda console: None)
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: None)
+    monkeypatch.setattr(cli_module, "login_via_browser", lambda *a, **k: None)
     monkeypatch.setattr(cli_module.console, "input", lambda *a, **k: "")
     monkeypatch.chdir(tmp_path)
     code = _run_setup(tmp_path)
@@ -165,8 +166,9 @@ def test_an_empty_manual_paste_is_rejected(tmp_path, monkeypatch):
 
 
 def test_leaves_an_existing_env_file_untouched_without_force(tmp_path, monkeypatch):
+    _env_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
     _env_path(tmp_path).write_text("EXISTING=1\n")
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
     monkeypatch.chdir(tmp_path)
     with respx.mock:
         _validate_ok()
@@ -178,7 +180,7 @@ def test_leaves_an_existing_env_file_untouched_without_force(tmp_path, monkeypat
 def test_cancelling_the_overwrite_prompt_leaves_the_token_file_untouched(tmp_path, monkeypatch):
     token_file = tmp_path / "tok"
     token_file.write_text("original-token")
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
 
     def raise_eof(*a, **k):
         raise EOFError
@@ -193,7 +195,7 @@ def test_cancelling_the_overwrite_prompt_leaves_the_token_file_untouched(tmp_pat
 
 
 def test_detected_timezone_is_used_without_prompting(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
     monkeypatch.setattr(cli_module, "_detect_timezone", lambda: "Europe/Brussels")
 
     def fail_if_asked(*a, **k):
@@ -209,7 +211,7 @@ def test_detected_timezone_is_used_without_prompting(tmp_path, monkeypatch):
 
 
 def test_falls_back_to_the_prompt_when_detection_fails(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
     monkeypatch.setattr(cli_module, "_detect_timezone", lambda: None)
     monkeypatch.setattr(cli_module.console, "input", lambda *a, **k: "Europe/Paris")
     monkeypatch.chdir(tmp_path)
@@ -221,7 +223,7 @@ def test_falls_back_to_the_prompt_when_detection_fails(tmp_path, monkeypatch):
 
 
 def test_cancelling_the_timezone_prompt_just_skips_it(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
     monkeypatch.setattr(cli_module, "_detect_timezone", lambda: None)
 
     def raise_keyboard_interrupt(*a, **k):
@@ -237,7 +239,7 @@ def test_cancelling_the_timezone_prompt_just_skips_it(tmp_path, monkeypatch):
 
 
 def test_an_invalid_typed_timezone_is_ignored_with_a_warning(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
     monkeypatch.setattr(cli_module, "_detect_timezone", lambda: None)
     monkeypatch.setattr(cli_module.console, "input", lambda *a, **k: "Not/A/Zone")
     monkeypatch.chdir(tmp_path)
@@ -249,8 +251,8 @@ def test_an_invalid_typed_timezone_is_ignored_with_a_warning(tmp_path, monkeypat
 
 
 def test_rejects_an_unvalidatable_token_without_writing_anything(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "bad-token")
-    monkeypatch.setattr(cli_module, "login_via_browser", lambda console: "still-bad")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "bad-token")
+    monkeypatch.setattr(cli_module, "login_via_browser", lambda *a, **k: "still-bad")
     monkeypatch.setattr(cli_module.console, "input", lambda *a, **k: "also-bad")
     monkeypatch.chdir(tmp_path)
     with respx.mock:
@@ -296,7 +298,7 @@ def test_detect_timezone_returns_none_for_an_invalid_zone_name(monkeypatch):
 
 
 def test_dest_flag_skips_the_destination_prompt(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
 
     def fail_if_asked(*a, **k):
         raise AssertionError("must not prompt when --dest and --timezone are both given")
@@ -310,7 +312,7 @@ def test_dest_flag_skips_the_destination_prompt(tmp_path, monkeypatch):
 
 
 def test_prompts_for_a_destination_when_not_passed_via_flag(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
     custom_dest = tmp_path / "my-media"
     monkeypatch.setattr(cli_module.console, "input", lambda *a, **k: str(custom_dest))
     monkeypatch.chdir(tmp_path)
@@ -327,7 +329,7 @@ def test_pressing_enter_accepts_the_default_destination(tmp_path, monkeypatch):
     # accepting the default in this test never touches the real home directory.
     fake_default = tmp_path / "fake-default-dest"
     monkeypatch.setattr("gopro_dl.config.default_dest", lambda: fake_default)
-    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda: "cached-token")
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
     monkeypatch.setattr(cli_module.console, "input", lambda *a, **k: "")
     monkeypatch.chdir(tmp_path)
     with respx.mock:
