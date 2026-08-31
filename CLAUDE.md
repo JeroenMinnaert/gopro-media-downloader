@@ -48,7 +48,7 @@ Tests are fully mocked (respx for HTTP) — no network access or real GoPro
 token needed to run the suite. Fixtures live in `tests/fixtures/`.
 
 CI (`.github/workflows/ci.yml`) runs ruff, then pytest across Python
-3.11/3.12/3.13 on **both** ubuntu-latest and macos-latest — macOS is not
+3.11/3.12/3.13/3.14 on **both** ubuntu-latest and macos-latest — macOS is not
 incidental, see Architecture below. It also smoke-tests the packaged entry
 point from outside the source tree and checks that a clean environment (no
 `GOPRO_*` vars, no config file) yields no usable token.

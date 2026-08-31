@@ -37,7 +37,7 @@ jobs:
         # macOS is not incidental: the free-space check parses `df` because
         # smbfs truncates statvfs, and that path only exists on Darwin.
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
