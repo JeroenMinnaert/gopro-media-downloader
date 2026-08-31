@@ -17,7 +17,7 @@ The suite is fully mocked (respx for HTTP): no network access, no GoPro
 account, and no token needed to run it. No test ever launches a real browser.
 The checked-in `.envrc` keeps your token, config, and browser profile inside
 the repo's gitignored `.dev-state/` instead of your real application-support
-directory — `CLAUDE.md` explains how that resolution works.
+directory — `CLAUDE.md` documents how that resolution works.
 
 ## Before you open a pull request
 
@@ -31,7 +31,7 @@ directory — `CLAUDE.md` explains how that resolution works.
 
 ## Things worth knowing before you edit
 
-Read `CLAUDE.md` — it's the architecture tour: the pipeline stage by stage,
+Read [ARCHITECTURE.md](ARCHITECTURE.md) — the architecture tour: the pipeline stage by stage,
 the concurrency model, and the cross-cutting invariants that are easy to break
 by accident (which variation is the original file, why a `.part` file is only
 renamed once its size matches, why `fix-dates` rebuilds JPEGs but only ever
@@ -51,7 +51,8 @@ see [SECURITY.md](SECURITY.md).
 ## Releasing (maintainers)
 
 The version lives in one place, `src/gopro_dl/__init__.py:__version__`. Bump
-it, commit, then push a matching tag:
+it, move the `## [Unreleased]` heading in `CHANGELOG.md` down to the new
+version and date, commit, then push a matching tag:
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
