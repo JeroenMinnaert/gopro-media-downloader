@@ -17,7 +17,7 @@ The suite is fully mocked (respx for HTTP): no network access, no GoPro
 account, and no token needed to run it. No test ever launches a real browser.
 The checked-in `.envrc` keeps your token, config, and browser profile inside
 the repo's gitignored `.dev-state/` instead of your real application-support
-directory — see the Development section of the README for the details.
+directory — `CLAUDE.md` explains how that resolution works.
 
 ## Before you open a pull request
 
@@ -47,3 +47,22 @@ useful thing a report can carry.
 
 Use the issue templates. For a security problem, don't open an issue at all —
 see [SECURITY.md](SECURITY.md).
+
+## Releasing (maintainers)
+
+The version lives in one place, `src/gopro_dl/__init__.py:__version__`. Bump
+it, commit, then push a matching tag:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` runs the full lint + OS/Python matrix, then
+builds the sdist/wheel and publishes to PyPI via
+[trusted publishing](https://docs.pypi.org/trusted-publishers/) (OIDC, no
+stored token). One-time PyPI setup: add this repo as a trusted publisher for
+the `gopro-media-downloader` project, workflow `release.yml`, environment
+`pypi`.
+
+Actions are pinned to commit SHAs and the repository requires it, so a bump
+must keep the `@<sha> # vN` form or every job fails at "Set up job".

@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A resumable CLI (`gopro-dl`) that downloads a user's entire GoPro Plus cloud
 library in original quality into flat `YYYY-MM-DD/` folders, safe to run for
 hours against terabytes of media and to interrupt/resume at any point. See
-README.md for the full user-facing story (token setup, NAS notes, integrity
+README.md and docs/ for the full user-facing story (token setup, NAS notes, integrity
 model) — it's detailed and not repeated here.
 
 ## Commands
@@ -101,7 +101,7 @@ whole suite passes first.
    403 from the CDN mid-download is routine (signed URLs expire) and is
    handled by refetching a fresh URL, *not* by failing the file.
 6. **`integrity.py`** / **`verify.py`** — S3 multipart ETag verification
-   computed while streaming (see README's "How the ETag works" for the math).
+   computed while streaming (see docs/file-integrity.md for the math).
 7. **`auth.py`** (`AuthGate`, `TokenProvider`) — a 401/403 from the API
    (distinct from a CDN 403) parks every worker; the main thread runs the
    interactive/non-interactive refresh prompt and releases the gate. No work
