@@ -74,6 +74,10 @@ Notable changes to this project. The format follows
 
 ### Security
 
+- The maintainer's personal email address is no longer in `pyproject.toml`
+  (and so not in the PyPI metadata) or `SECURITY.md`; vulnerability reports go
+  through GitHub's private vulnerability reporting.
+
 - The Docker publish workflow triggers on CI completion, whose `branches:`
   filter matches the *head* branch of the triggering run — a fork's own `main`
   satisfied it. Publishing now additionally requires a `push` event from this
