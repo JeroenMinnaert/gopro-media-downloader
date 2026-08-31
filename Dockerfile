@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # `cron` is the only extra system package: gopro-dl itself has no native
 # dependencies beyond what pip installs. The interactive `setup` wizard's
