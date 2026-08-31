@@ -47,6 +47,10 @@ Notable changes to this project. The format follows
   often it was re-hashed against the origin's ETag.
 - The progress bar counted failed files as done.
 
+### Added
+
+- `gopro-dl --version`, which the bug-report template asks reporters for.
+
 ### Changed
 
 - `status`, `report`, `verify`, `retry`, `backfill-etags` and `fix-dates` no

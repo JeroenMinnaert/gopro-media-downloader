@@ -13,6 +13,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
+from . import __version__
 from .api import ApiError, AuthExpired, GoProClient
 from .auth import AuthGate, TokenError, TokenProvider, normalize_token, token_instructions
 from .backfill import backfill_etags
@@ -65,6 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Download your GoPro Plus cloud library in original quality, "
         "into flat YYYY-MM-DD folders, resumably.",
     )
+    parser.add_argument("--version", action="version", version=f"gopro-dl {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def common(p: argparse.ArgumentParser, needs_manifest: bool = True) -> None:
