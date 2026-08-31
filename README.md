@@ -33,22 +33,72 @@ items, including chaptered recordings and a 13.6 GiB 4-chapter clip.
 └── .gopro-dl/          # manifest.db + run logs (exclude from your NAS copy)
 ```
 
+## Quickstart
+
+From nothing to a running backup:
+
+```bash
+pipx install gopro-media-downloader   # 1. install (see Install for alternatives)
+gopro-dl setup                        # 2. log into GoPro, pick a destination
+gopro-dl sync --dry-run               # 3. enumerate the library, download nothing
+gopro-dl sync --limit 5               # 4. fetch five real files as a smoke test
+gopro-dl sync                         # 5. the real run -- Ctrl-C is safe
+```
+
+`setup` opens a real GoPro login page in a browser window, takes the session
+token from it, and saves your destination and timezone — after that every
+command is a bare one-liner from any directory. It never sees your password;
+there is no username/password handling in this tool at all.
+
+Steps 3 and 4 are worth doing. `--dry-run` pages the whole library into the
+manifest and stops, so it tells you how many items and how many bytes you are
+about to pull; `--limit 5` then puts five actual files on disk. Between them
+you find out about a wrong destination, a bad timezone or a full disk in a
+couple of minutes rather than four hours in.
+
+The real run is designed to be interrupted: press Ctrl-C whenever you like and
+re-run `gopro-dl sync` to continue from the exact byte it reached. Expect the
+token to expire partway through a long run — that is normal and handled, see
+[Troubleshooting](#troubleshooting).
+
+Where to go next:
+
+| If you want to | Read |
+| --- | --- |
+| Get the token by hand, or script setup | [Getting a token](#getting-a-token) |
+| Know every command and flag | [Everyday use](#everyday-use) |
+| Fix something that went wrong | [Troubleshooting](#troubleshooting) |
+| Download straight to a NAS | [Downloading straight to a NAS](#downloading-straight-to-a-nas) |
+| Fix wrong dates in Photos/Lightroom | [Capture dates inside the files](#capture-dates-inside-the-files) |
+| Understand what "verified" means here | [File integrity](#file-integrity) |
+| Run it on a schedule in a container | [Running in Docker](#running-in-docker) |
+
 ## Install
+
+Needs Python 3.11 or newer. Tested on macOS and Linux.
 
 ```bash
 pipx install gopro-media-downloader   # once published to PyPI
 gopro-dl --help
 ```
 
-Or from source, in a virtualenv:
+`pipx` keeps it in its own virtualenv and puts `gopro-dl` on your `PATH`; plain
+`pip install gopro-media-downloader` works too if you'd rather manage that
+yourself. From source:
 
 ```bash
+git clone https://github.com/JeroenMinnaert/gopro-media-downloader
+cd gopro-media-downloader
 python3 -m venv .venv
 .venv/bin/pip install -e .
 .venv/bin/gopro-dl --help
 ```
 
-## Get your token and get set up
+The first run that needs a browser login downloads Chromium on its own
+(one-time, ~250 MB) — nothing to install by hand. To run headless on a NAS or
+server instead, see [Running in Docker](#running-in-docker).
+
+## Getting a token
 
 There is deliberately **no username/password handling in this tool** — GoPro's
 sign-in involves OAuth and CAPTCHAs, and this tool never touches your
@@ -145,11 +195,12 @@ gopro-dl token
 With no `--token-file`/`GOPRO_TOKEN_FILE` set, this reads from the same
 per-OS default location `setup` wrote to — so it works from any directory.
 
-## Usage
+## Everyday use
 
-Once `gopro-dl setup` has run, every command below is a one-liner from any
-directory — settings are saved for you. Otherwise pass `--dest`,
-`--token-file` and `--timezone` explicitly (see `.env.example` for every key).
+Every command below is a one-liner from any directory once `gopro-dl setup`
+has run — your settings are saved. Without setup, pass `--dest`,
+`--token-file` and `--timezone` explicitly on each call (`.env.example` lists
+every key).
 
 ```bash
 # Plan only -- builds the full manifest, downloads nothing
@@ -179,10 +230,9 @@ gopro-dl retry                  # reset failed files, then sync again
 gopro-dl token                  # is the current token still valid?
 ```
 
-A first Ctrl-C stops after the current chunks and keeps every `.part` file;
-re-running resumes from the exact byte. It can take up to a minute to take
-effect, because a worker may be blocked on a socket read — press it again to
-stop immediately (still safe: partial files and the manifest survive).
+A first Ctrl-C stops after the chunks in flight, keeps every `.part` file, and
+re-running resumes from the exact byte — see
+[Ctrl-C seems to hang](#ctrl-c-seems-to-hang) if it doesn't stop instantly.
 
 Useful flags: `--timezone Europe/Paris`, `--since 2022-01-01`,
 `--until 2022-12-31`, `--types Video,Photo`,
@@ -193,7 +243,9 @@ Settings written by `gopro-dl setup` live in one config file (`.env.example`
 lists every key), the same for every directory. Precedence is
 flag → environment variable → that config file → built-in default.
 
-## When the token expires mid-run
+## Troubleshooting
+
+### The token expired mid-run
 
 Expected on a run this long. The download pauses, every worker parks, and the
 tool first silently checks the saved browser profile (from `gopro-dl setup`,
@@ -218,6 +270,67 @@ involved), which suits `nohup`/`screen` runs.
 Note that a **403 from GoPro's CDN is not** token expiry — signed media URLs are
 time-limited and routinely expire mid-file. Those are refreshed silently and
 never interrupt you.
+
+
+### `database is locked`, or the manifest looks corrupt
+
+You are almost certainly writing the manifest to an SMB or NFS share. Don't —
+see [Downloading straight to a NAS](#downloading-straight-to-a-nas). `gopro-dl`
+moves the manifest to local disk automatically when it can detect a network
+`--dest`; if detection failed, point it somewhere local yourself with
+`--manifest-dir`.
+
+### It refuses to start: not enough free space
+
+Pre-flight sizes the run before the first byte and exits 1 rather than filling
+your disk halfway through. Either free up space, or work through the library in
+date ranges — see
+[If the destination is smaller than the library](#if-the-destination-is-smaller-than-the-library).
+On macOS, a >4 TiB SMB share that *does* have room is measured with `df`
+precisely because `statvfs` under-reports it; if you still see a bogus refusal,
+that detection is the place to look.
+
+### Everything is dated today in Photos, Lightroom or my NAS app
+
+The folder names are right but the date *inside* the file is missing or wrong —
+GoPro serves many JPEGs with no `DateTimeOriginal` at all, so apps fall back to
+when you downloaded it. Run `gopro-dl fix-dates --dry-run` to see the damage,
+then `gopro-dl fix-dates` to repair it in place. Full detail, including what
+happens when the camera's clock had been reset, is in
+[Capture dates inside the files](#capture-dates-inside-the-files).
+
+### Files show as `unverified` in `status`
+
+Not corruption. A resumed download can't be hashed from byte zero, and some
+files have several plausible S3 part sizes, so the tool declines to claim a
+verdict it cannot prove. Run `gopro-dl backfill-etags` then
+`gopro-dl verify --deep` once the sync is finished. The reasoning is in
+[File integrity](#file-integrity).
+
+### A file failed. What now?
+
+```bash
+gopro-dl report --failed-only   # what failed and why
+gopro-dl retry                  # reset those to pending
+gopro-dl sync                   # fetch them again
+```
+
+A 403 from GoPro's CDN mid-download is *not* a failure and is refreshed
+silently — signed media URLs are time-limited by design.
+
+### It's much slower than my connection
+
+Downloading to a NAS over WiFi means every byte crosses the air twice (CDN →
+machine, machine → NAS) on a half-duplex medium. Measured 32.5 MiB/s over
+802.11ax against 75 MiB/s over gigabit ethernet — a 2.3x difference for the
+cost of plugging in a cable. Concurrency is capped at 8 (`--concurrency`) and
+defaults to 3 deliberately; raising it will not beat your link.
+
+### Ctrl-C seems to hang
+
+The first press finishes the chunks in flight and flushes state, which can take
+up to a minute if a worker is blocked on a socket read. Press it again to stop
+immediately — still safe, `.part` files and the manifest both survive.
 
 ## How it stays safe on a multi-terabyte run
 
@@ -595,7 +708,7 @@ stored token). One-time setup on PyPI: add this repo as a trusted publisher
 for the `gopro-media-downloader` project, workflow `release.yml`, environment
 `pypi`.
 
-84 tests, all against mocked API responses — no network and no token needed.
+196 tests, all against mocked API responses — no network and no token needed.
 They cover pagination, source-variation selection (including the proxy trap and
 multi-chapter fan-out), capture-date foldering and DST boundaries, collision
 stability, manifest idempotency, the resume state machine
