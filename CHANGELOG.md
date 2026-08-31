@@ -6,6 +6,10 @@ Notable changes to this project. The format follows
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.1] — 2026-08-31
+
 ### Fixed
 
 - `sync` created the destination's log directory before discovering there was
@@ -63,5 +67,6 @@ history, and describe code that never shipped.
   space are checked before the first byte.
 - **Docker image** with an optional cron scheduler for unattended runs.
 
-[Unreleased]: https://github.com/JeroenMinnaert/gopro-media-downloader/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/JeroenMinnaert/gopro-media-downloader/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/JeroenMinnaert/gopro-media-downloader/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/JeroenMinnaert/gopro-media-downloader/releases/tag/v0.1.0

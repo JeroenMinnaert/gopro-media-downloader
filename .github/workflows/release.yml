@@ -9,7 +9,27 @@ permissions:
   contents: read
 
 jobs:
+  # A tag name does not set the version -- hatch reads __version__ -- so a tag
+  # that disagrees with the code builds an already-published version and only
+  # finds out at the upload, after the whole matrix has run. Seconds here
+  # instead.
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: The tag must match __version__
+        if: github.ref_type == 'tag'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          code="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/gopro_dl/__init__.py)"
+          if [ "$tag" != "$code" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match __version__ ${code}"
+            exit 1
+          fi
+          echo "tag ${GITHUB_REF_NAME} matches __version__ ${code}"
+
   test:
+    needs: version
     uses: ./.github/workflows/ci.yml
 
   build:
