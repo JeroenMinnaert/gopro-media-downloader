@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS media_files (
   checksum_state TEXT,
   -- what the origin holds, kept aside once `fix-dates` edits the local bytes
   origin_checksum TEXT,
+  origin_checksum_algo TEXT,
   origin_size INTEGER,
   dates_fixed_at TEXT,
   target_path TEXT NOT NULL UNIQUE,
@@ -110,7 +111,12 @@ class Manifest:
             # `fix-dates` rewrites bytes on purpose, so the origin's size and
             # hash stop describing the local file; they are kept here while the
             # live columns switch to describing what is actually on disk.
-            for column in ("origin_checksum TEXT", "origin_size INTEGER", "dates_fixed_at TEXT"):
+            for column in (
+                "origin_checksum TEXT",
+                "origin_checksum_algo TEXT",
+                "origin_size INTEGER",
+                "dates_fixed_at TEXT",
+            ):
                 if column.split()[0] not in existing:
                     self.conn.execute(f"ALTER TABLE media_files ADD COLUMN {column}")
                     added = True
@@ -510,6 +516,7 @@ class Manifest:
         size: int,
         origin_checksum: str | None = None,
         origin_size: int | None = None,
+        origin_checksum_algo: str | None = None,
     ) -> None:
         """Point verification at the repaired bytes, keeping the origin's aside.
 
@@ -520,12 +527,14 @@ class Manifest:
             self.conn.execute(
                 "UPDATE media_files SET "
                 "origin_checksum=COALESCE(origin_checksum, ?), "
+                "origin_checksum_algo=COALESCE(origin_checksum_algo, ?), "
                 "origin_size=COALESCE(origin_size, ?), "
                 "checksum=?, checksum_algo='md5', checksum_state='local_after_date_fix', "
                 "expected_size=?, actual_size=?, dates_fixed_at=? "
                 "WHERE id=?",
                 (
                     origin_checksum,
+                    origin_checksum_algo,
                     origin_size,
                     local_checksum,
                     size,
@@ -608,11 +617,30 @@ class Manifest:
         The attempt count goes with it, as in `reset_failed`: a file that once
         exhausted its budget would otherwise be skipped in silence by the very
         sync that `verify --fix` just told the user to run.
+
+        A repaired file also stops describing our repair. What is about to land
+        is GoPro's bytes again, so the origin's size and checksum move back into
+        the live columns -- otherwise the fresh original is measured against the
+        repaired copy's size, fails, is deleted and fetched again, forever.
         """
         with self._lock:
             self.conn.execute(
-                "UPDATE media_files SET state='pending', attempts=0, last_error=NULL, "
-                "actual_size=NULL, completed_at=NULL WHERE id=?",
+                """
+                UPDATE media_files SET
+                  state='pending', attempts=0, last_error=NULL,
+                  actual_size=NULL, completed_at=NULL,
+                  expected_size=CASE WHEN dates_fixed_at IS NOT NULL
+                    THEN origin_size ELSE expected_size END,
+                  checksum=CASE WHEN dates_fixed_at IS NOT NULL
+                    THEN origin_checksum ELSE checksum END,
+                  checksum_algo=CASE WHEN dates_fixed_at IS NOT NULL
+                    THEN origin_checksum_algo ELSE checksum_algo END,
+                  checksum_state=CASE WHEN dates_fixed_at IS NOT NULL
+                    THEN NULL ELSE checksum_state END,
+                  origin_checksum=NULL, origin_checksum_algo=NULL, origin_size=NULL,
+                  dates_fixed_at=NULL
+                WHERE id=?
+                """,
                 (file_id,),
             )
             self.conn.commit()

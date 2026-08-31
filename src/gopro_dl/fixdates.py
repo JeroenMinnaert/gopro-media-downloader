@@ -328,5 +328,6 @@ def _rebase_integrity(manifest: Manifest, row, path: Path, digest: str | None = 
         local_checksum=digest,
         size=path.stat().st_size,
         origin_checksum=row["checksum"] if first_fix else None,
+        origin_checksum_algo=row["checksum_algo"] if first_fix else None,
         origin_size=row["expected_size"] if first_fix else None,
     )

@@ -35,6 +35,13 @@ Notable changes to this project. The format follows
 - Signed-URL refreshes now back off, so a CDN-side outage no longer burns every
   file's refresh budget within seconds.
 - `report --csv` to an unwritable path is an error message, not a traceback.
+- A date-repaired file that `verify --fix` re-queued kept describing the
+  repair: the freshly downloaded original was then measured against the
+  repaired copy's size, failed, was deleted and fetched again -- forever, for
+  any file whose Exif addition exceeds the listing-drift tolerance. The
+  origin's size, checksum and algorithm now move back into the live columns on
+  re-queue (`origin_checksum_algo` is new, and added to existing manifests by
+  the usual migration).
 - `verify --deep` threw away the proof it computed: a resumed file, which
   cannot be hashed while streaming, stayed "size-only" in `status` however
   often it was re-hashed against the origin's ETag.

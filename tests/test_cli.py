@@ -1,6 +1,8 @@
 """The command surface itself: argument validation, exit codes, and the
 messages a user actually sees when something is wrong."""
 
+import threading
+
 import httpx
 import pytest
 import respx
@@ -164,3 +166,55 @@ def test_token_leaves_no_log_directory_behind(tmp_path, capsys):
         respx.get(f"{API_HOST}/media/user").mock(httpx.Response(200, json={"id": "u1"}))
         assert run("token", dest=dest) == 0
     assert not dest.exists()
+
+
+# -- interrupting a long run -----------------------------------------------
+
+
+def test_the_first_ctrl_c_asks_for_a_clean_stop_and_the_second_aborts():
+    """A multi-hour run must stop *between* chunks so the .part survives; a
+    second Ctrl-C is the escape hatch for someone who cannot wait."""
+    import os
+    import signal
+
+    from gopro_dl.cli import install_sigint
+
+    previous = signal.getsignal(signal.SIGINT)
+    shutdown = threading.Event()
+    try:
+        install_sigint(shutdown)
+        os.kill(os.getpid(), signal.SIGINT)
+        assert shutdown.is_set()  # asked to wind down, not killed
+
+        with pytest.raises(KeyboardInterrupt):
+            os.kill(os.getpid(), signal.SIGINT)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+# -- the shape most real items actually have -------------------------------
+
+
+def test_items_without_a_timezone_fall_back_to_the_configured_one(tmp_path, capsys):
+    """GoPro omits captured_at_timezone on essentially every item, so the
+    fallback -- not the API -- is what names most folders."""
+    dest = tmp_path / "media"
+    page = {
+        "_embedded": {"media": [{
+            "id": "zzz999", "type": "Photo", "filename": "GOPR9999.JPG",
+            "captured_at": "2024-03-01T23:30:00Z",  # already the 2nd in Paris
+            "file_size": 10, "item_count": 1,
+        }]},
+        "_pages": {"total_pages": 1},
+    }
+    with respx.mock:
+        respx.get(f"{API_HOST}/media/user").mock(httpx.Response(200, json={"id": "u1"}))
+        respx.get(f"{API_HOST}/media/search").mock(httpx.Response(200, json=page))
+        assert main([
+            "sync", "--dest", str(dest), "--token", "test-token",
+            "--timezone", "Europe/Paris", "--dry-run",
+        ]) == 0
+
+    assert "no captured_at_timezone" in capsys.readouterr().out
+    with Manifest(dest / ".gopro-dl" / "manifest.db") as m:
+        assert m.get_item("zzz999")["date_folder"] == "2024-03-02"
