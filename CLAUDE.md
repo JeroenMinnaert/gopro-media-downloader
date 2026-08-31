@@ -53,39 +53,11 @@ incidental, see Architecture below. It also smoke-tests the packaged entry
 point from outside the source tree and checks that a clean environment (no
 `GOPRO_*` vars, no config file) yields no usable token.
 
-A separate workflow (`.github/workflows/docker-publish.yml`) builds the
-`Dockerfile` (linux/amd64 + linux/arm64) and pushes it to Docker Hub. **Images
-are cut from releases, not from `main`:** it triggers via `workflow_run` on the
-*Release* workflow completing, and publishes only when that run succeeded, came
-from a tag push, and originated in this repository. So an image exists exactly
-when a version exists, and it has been through the same matrix, build and PyPI
-publish. Triggering on the tag push directly would race those checks and could
-ship an image for a release that failed.
-
-The tags come from the version: `v0.1.1` publishes `:0.1.1`, `:0.1` and
-`:latest`, so `:latest` means the newest release rather than the newest commit.
-A pre-release (`v0.2.0-rc1`) publishes only its exact version — it must not
-become what `:latest` or `:0.2` resolve to. It authenticates with the repo secrets
-`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token, not
-the account password) — create the target repository on Docker Hub as
-Private *before* the first push, since Docker Hub does not necessarily
-default a new, auto-created repository to private.
-
-A third workflow (`.github/workflows/release.yml`) builds and publishes to
-PyPI via trusted publishing (OIDC, no token) on a `v*` tag push. Its `test`
-job calls `ci.yml` as a reusable workflow (`workflow_call`) so a tag gets
-the exact same lint + full OS/Python matrix as a normal push to `main` —
-tags aren't otherwise covered by `ci.yml`'s own triggers. `build` `needs:
-test` and `publish` `needs: build`, so nothing reaches PyPI unless that
-whole suite passes first, and a `version` job everything else waits on fails
-the run in seconds when the tag and `__version__` disagree.
-
-Two further gates sit outside the YAML, and both have to be right or a release
-stops at the publish step: the PyPI trusted publisher is constrained to the
-`pypi` environment, and that GitHub environment only accepts refs matching the
-`v*` **tag** policy (no branch policy at all). Together they mean a version tag
-is the only thing that can publish — which is why `release.yml` no longer
-offers `workflow_dispatch`: it could only ever have been turned away.
+Publishing is a separate concern with gates that are not all visible in the
+YAML — see **[docs/releasing.md](docs/releasing.md)** for the version bump, what
+each job in `release.yml` does, why Docker images are cut from releases rather
+than from `main`, and what a release that stops half way is telling you. Read it
+before changing anything under `.github/workflows/` or the version string.
 
 ## Architecture
 

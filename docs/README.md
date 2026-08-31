@@ -9,6 +9,7 @@
 | [Capture dates](capture-dates.md) | `fix-dates`: what it writes and why, JPEG rebuild vs MP4 in-place patch, and the camera-clock-reset case |
 | [Downloading to a NAS](nas.md) | SMB/NFS destinations, why the manifest goes local, and working in batches on a small disk |
 | [Running in Docker](docker.md) | The bundled `Dockerfile` and compose example, headless setup, scheduled runs |
+| [Cutting a release](releasing.md) | The version bump, what each workflow job does, the PyPI and Docker Hub gates, and what a failed release means |
 | [API notes](api-notes.md) | The GoPro API's sharp edges — every one of these caused a bug that looked like success |
 
 How the code is put together: [ARCHITECTURE.md](../ARCHITECTURE.md).
