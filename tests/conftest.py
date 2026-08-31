@@ -93,7 +93,7 @@ def make_item(media_id="aaa111", **overrides) -> MediaItem:
         "type": "Video",
         "filename": "GX010001.MP4",
         "captured_at": "2023-07-14T22:30:00Z",
-        "captured_at_timezone": "Europe/Brussels",
+        "captured_at_timezone": "Europe/Paris",
         "file_size": 1000,
         "item_count": 1,
     }

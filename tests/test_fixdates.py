@@ -12,14 +12,14 @@ from gopro_dl.fixdates import expected_times, fix_dates
 from gopro_dl.mediadates import apply_dates, read_dates
 from gopro_dl.verify import verify
 
-# 22:30 UTC on the 14th is already the 15th in Brussels -- the same conversion
+# 22:30 UTC on the 14th is already the 15th in Paris -- the same conversion
 # that names the folder must be the one written into the Exif.
 CAPTURED_AT = "2023-07-14T22:30:00Z"
 FOLDER = "2023-07-15"
 LOCAL = datetime(2023, 7, 15, 0, 30, 0)
 
 
-def seed(manifest, dest, filename, payload, *, media_id="aaa111", tz="Europe/Brussels"):
+def seed(manifest, dest, filename, payload, *, media_id="aaa111", tz="Europe/Paris"):
     item = make_item(media_id, filename=filename, captured_at=CAPTURED_AT, captured_at_timezone=tz)
     manifest.upsert_item(item, FOLDER)
     rel = f"{FOLDER}/{filename}"
@@ -33,7 +33,7 @@ def seed(manifest, dest, filename, payload, *, media_id="aaa111", tz="Europe/Bru
 
 
 def test_expected_times_match_the_folder_conversion():
-    local, utc = expected_times(CAPTURED_AT, "Europe/Brussels")
+    local, utc = expected_times(CAPTURED_AT, "Europe/Paris")
     assert local == LOCAL
     assert utc == datetime(2023, 7, 14, 22, 30, tzinfo=UTC)
 
@@ -199,13 +199,13 @@ def test_the_fallback_timezone_is_the_one_the_sync_used(manifest, tmp_path):
     from gopro_dl.paths import parse_timezone
 
     path = seed(manifest, tmp_path, "IMG_0011.jpg", make_jpeg(), tz=None)
-    fix_dates(manifest, tmp_path, fallback_timezone=parse_timezone("Europe/Brussels"))
+    fix_dates(manifest, tmp_path, fallback_timezone=parse_timezone("Europe/Paris"))
     assert read_dates(path).primary == LOCAL
 
 
 def _seed_clip(manifest, dest, name, embedded, media_id, captured_at=CAPTURED_AT):
     item = make_item(
-        media_id, filename=name, captured_at=captured_at, captured_at_timezone="Europe/Brussels"
+        media_id, filename=name, captured_at=captured_at, captured_at_timezone="Europe/Paris"
     )
     manifest.upsert_item(item, FOLDER)
     rel = f"{FOLDER}/{name}"

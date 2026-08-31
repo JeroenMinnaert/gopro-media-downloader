@@ -15,17 +15,17 @@ from gopro_dl.paths import (
 
 
 def test_capture_local_date_wins_over_utc():
-    # 22:30 UTC is already the next day in Brussels -- the folder must follow
+    # 22:30 UTC is already the next day in Paris -- the folder must follow
     # the capture-local date, not UTC.
-    assert date_folder("2023-07-14T22:30:00Z", "Europe/Brussels")[0] == "2023-07-15"
+    assert date_folder("2023-07-14T22:30:00Z", "Europe/Paris")[0] == "2023-07-15"
     assert date_folder("2023-07-14T22:30:00Z", "+02:00")[0] == "2023-07-15"
     assert date_folder("2023-07-14T22:30:00Z", "-05:00")[0] == "2023-07-14"
 
 
 def test_dst_boundary():
-    # Brussels is UTC+1 in winter, UTC+2 in summer.
-    assert date_folder("2023-01-14T23:30:00Z", "Europe/Brussels")[0] == "2023-01-15"
-    assert date_folder("2023-06-14T21:30:00Z", "Europe/Brussels")[0] == "2023-06-14"
+    # Paris is UTC+1 in winter, UTC+2 in summer.
+    assert date_folder("2023-01-14T23:30:00Z", "Europe/Paris")[0] == "2023-01-15"
+    assert date_folder("2023-06-14T21:30:00Z", "Europe/Paris")[0] == "2023-06-14"
 
 
 def test_missing_or_bogus_timezone_falls_back_to_utc_with_warning():
@@ -99,19 +99,19 @@ def test_fallback_timezone_is_used_only_when_the_api_gives_none():
     Without a fallback, folder dates are UTC and clips shot late in the evening
     land in the previous day's folder.
     """
-    brussels = parse_timezone("Europe/Brussels")
+    paris = parse_timezone("Europe/Paris")
 
     # summer: UTC+2, so 22:24Z is already the next local day
-    folder, warning = date_folder("2025-08-21T22:24:04Z", None, brussels)
+    folder, warning = date_folder("2025-08-21T22:24:04Z", None, paris)
     assert folder == "2025-08-22"
-    assert "Europe/Brussels" in warning
+    assert "Europe/Paris" in warning
 
     # winter: UTC+1, so the same clock time does NOT cross midnight
-    assert date_folder("2025-01-21T22:30:00Z", None, brussels)[0] == "2025-01-21"
-    assert date_folder("2025-01-21T23:30:00Z", None, brussels)[0] == "2025-01-22"
+    assert date_folder("2025-01-21T22:30:00Z", None, paris)[0] == "2025-01-21"
+    assert date_folder("2025-01-21T23:30:00Z", None, paris)[0] == "2025-01-22"
 
     # a timezone from the API always wins over the fallback
-    assert date_folder("2025-08-21T22:24:04Z", "-05:00", brussels) == ("2025-08-21", None)
+    assert date_folder("2025-08-21T22:24:04Z", "-05:00", paris) == ("2025-08-21", None)
 
 
 def test_fallback_defaults_to_utc_when_unset():
@@ -121,7 +121,7 @@ def test_fallback_defaults_to_utc_when_unset():
 def test_parse_timezone_accepts_names_and_offsets_and_rejects_junk():
     import pytest as _pytest
 
-    assert parse_timezone("Europe/Brussels") is not None
+    assert parse_timezone("Europe/Paris") is not None
     assert parse_timezone("+02:00").utcoffset(None).total_seconds() == 7200
     assert parse_timezone("-0500").utcoffset(None).total_seconds() == -18000
     with _pytest.raises((ZoneInfoNotFoundError, ValueError)):

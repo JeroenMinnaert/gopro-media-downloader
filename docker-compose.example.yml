@@ -11,7 +11,7 @@ services:
     environment:
       GOPRO_DL_HOME: /config
       GOPRO_DEST: /media
-      GOPRO_TIMEZONE: Europe/Brussels
+      GOPRO_TIMEZONE: Europe/Paris
       # Standard 5-field cron syntax; remove this line to run once and exit
       # instead of becoming a long-lived scheduler.
       GOPRO_DL_CRON_SCHEDULE: "0 3 * * *"

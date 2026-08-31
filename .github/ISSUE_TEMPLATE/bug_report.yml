@@ -79,7 +79,7 @@ body:
       description: >
         Local disk, or a network mount? If network, which kind (SMB, NFS, ...)
         and mounted how. A surprising share of issues are SMB-specific.
-      placeholder: "SMB share on a UGREEN NAS, mounted at /Volumes/media"
+      placeholder: "SMB share on a NAS, mounted at /Volumes/media"
     validations:
       required: true
 
