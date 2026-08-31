@@ -11,9 +11,14 @@ services:
     environment:
       GOPRO_DL_HOME: /config
       GOPRO_DEST: /media
+      # The copied config.env holds the *host's* token path, which does not
+      # exist in here. An environment variable wins over the file, so this
+      # points the container at the token you mounted.
+      GOPRO_TOKEN_FILE: /config/token
       GOPRO_TIMEZONE: Europe/Paris
-      # Standard 5-field cron syntax; remove this line to run once and exit
-      # instead of becoming a long-lived scheduler.
+      # Standard 5-field cron syntax; drop this line *and* set `restart: "no"`
+      # above to run once and exit instead of becoming a long-lived scheduler
+      # -- otherwise Docker restarts the finished container and syncs forever.
       GOPRO_DL_CRON_SCHEDULE: "0 3 * * *"
     volumes:
       - ./gopro-dl-config:/config

@@ -216,3 +216,67 @@ def test_genuinely_full_disk_is_still_refused(tmp_path, monkeypatch):
 
     assert run(dest) == 1
     assert not list(dest.rglob("*.MP4"))
+
+
+@respx.mock
+def test_a_missing_chapter_fails_the_recording_even_though_each_file_verified(tmp_path):
+    """Chapters carry no per-file size, so each one verifies happily against
+    its own Content-Length. The listing's total for the item is the only thing
+    that can notice one of them came back short."""
+    mock_gopro()
+    short = CHAPTERS[3][:200]  # 400 bytes missing from a 2100-byte recording
+    respx.get("https://cdn.gopro.test/ddd444/source/default/3.mp4").mock(
+        side_effect=lambda request: httpx.Response(200, content=short)
+    )
+    dest = tmp_path / "media"
+
+    assert run(dest) == 1
+    with Manifest(dest / ".gopro-dl" / "manifest.db") as m:
+        assert m.get_item("ddd444")["state"] == "failed"
+        assert "item total" in m.get_item("ddd444")["last_error"]
+        # the untouched items still landed
+        assert m.get_item("aaa111")["state"] == "done"
+
+
+@respx.mock
+def test_listing_drift_on_the_item_total_is_tolerated(tmp_path):
+    """The same listing sizes are a few bytes stale on re-muxed uploads; that
+    must not fail a recording that is actually complete."""
+    mock_gopro()
+    respx.get("https://cdn.gopro.test/ddd444/source/default/3.mp4").mock(
+        side_effect=lambda request: httpx.Response(200, content=CHAPTERS[3][:-1])
+    )
+    dest = tmp_path / "media"
+
+    assert run(dest) == 0
+    with Manifest(dest / ".gopro-dl" / "manifest.db") as m:
+        assert m.get_item("ddd444")["state"] == "done"
+
+
+@respx.mock
+def test_a_run_with_failures_exits_1(tmp_path):
+    """Scripted and cron users only ever see the exit code."""
+    mock_gopro()
+    respx.get(f"{API_HOST}/media/aaa111/download").mock(httpx.Response(404, json={}))
+    dest = tmp_path / "media"
+
+    assert run(dest) == 1
+    # the other items were not held back by the poisoned one
+    assert (dest / "2024-01-02" / "GOPR0002.JPG").read_bytes() == PHOTO
+    with Manifest(dest / ".gopro-dl" / "manifest.db") as m:
+        assert m.get_item("aaa111")["state"] == "failed"
+
+
+@respx.mock
+def test_an_item_with_no_source_variation_is_skipped_not_failed(tmp_path):
+    mock_gopro()
+    respx.get(f"{API_HOST}/media/bbb222/download").mock(
+        httpx.Response(200, json={"_embedded": {"variations": [
+            {"label": "mp4_low", "url": "https://cdn.gopro.test/low", "file_size": 10}]}})
+    )
+    dest = tmp_path / "media"
+
+    assert run(dest) == 0  # nothing failed; there is simply no original to fetch
+    with Manifest(dest / ".gopro-dl" / "manifest.db") as m:
+        row = m.get_item("bbb222")
+        assert row["state"] == "skipped" and row["skip_reason"] == "no_source_variation"

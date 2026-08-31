@@ -18,7 +18,15 @@ cp ~/Library/Application\ Support/gopro-dl/{token,config.env} ./gopro-dl-config/
 docker compose up -d --build
 ```
 
-By default the container runs `gopro-dl sync --non-interactive` once and exits.
+That `config.env` records the *host's* token path, which doesn't exist inside
+the container — the compose example's `GOPRO_TOKEN_FILE: /config/token`
+overrides it, since an environment variable beats the file. Keep that line, or
+delete `GOPRO_TOKEN_FILE` from the copy you mount.
+
+By default the container runs `gopro-dl sync --non-interactive` once and exits
+— though `restart: unless-stopped` then starts it again, so for a genuine
+one-shot run set `restart: "no"` as well.
+
 Set `GOPRO_DL_CRON_SCHEDULE` (5-field cron, e.g. `"0 3 * * *"`) to have it
 install that as a cron job and stay running as a scheduler; `docker compose
 logs -f` shows each run. That's a container-only setting read by the entrypoint,

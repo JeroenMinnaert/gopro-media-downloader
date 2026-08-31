@@ -14,6 +14,7 @@ from .manifest import Manifest
 class VerifyReport:
     checked: int = 0
     ok: int = 0
+    already_verified: int = 0
     missing: list[str] = field(default_factory=list)
     wrong_size: list[tuple[str, int, int]] = field(default_factory=list)
     bad_checksum: list[str] = field(default_factory=list)
@@ -35,8 +36,22 @@ def file_hash(path: Path, algo: str) -> str | None:
     return digest.hexdigest()
 
 
-def verify(manifest: Manifest, dest: Path, deep: bool = False, fix: bool = False) -> VerifyReport:
-    """Re-check every file the manifest believes is done."""
+def verify(
+    manifest: Manifest,
+    dest: Path,
+    deep: bool = False,
+    fix: bool = False,
+    only_unverified: bool = False,
+) -> VerifyReport:
+    """Re-check every file the manifest believes is done.
+
+    `only_unverified` skips the *hashing* for files a previous deep pass
+    already proved -- not the file itself: existence and size are a `stat` and
+    always run. It is for finishing an interrupted pass or checking what a
+    resumed download left unproven, over a library where re-reading every byte
+    costs hours. A full `--deep` remains the way to find bit rot, since a file
+    that was fine last month is exactly what rot happens to.
+    """
     report = VerifyReport()
 
     def requeue(row, path: Path | None = None) -> None:
@@ -62,10 +77,15 @@ def verify(manifest: Manifest, dest: Path, deep: bool = False, fix: bool = False
             requeue(row, path)
             continue
 
-        if not expected:
-            report.unverifiable.append(row["target_path"])
+        # "unverifiable" and "ok" are exclusive: a file nothing could be
+        # checked against has not passed, it simply has no verdict.
+        unverifiable = not expected
 
-        if deep and row["checksum"] and row["checksum_algo"] == "s3-etag":
+        settled = only_unverified and row["verified_at"] is not None
+        if settled:
+            report.already_verified += 1
+
+        if not settled and deep and row["checksum"] and row["checksum_algo"] in ("s3-etag", "etag"):
             # Re-hash against the origin's ETag. Inconclusive (None) means the
             # upload used a part size we cannot pin down -- not corruption.
             verdict = etag_for_file(path, row["checksum"])
@@ -73,14 +93,22 @@ def verify(manifest: Manifest, dest: Path, deep: bool = False, fix: bool = False
                 report.bad_checksum.append(row["target_path"])
                 requeue(row, path)
                 continue
-            if verdict is None:
-                report.unverifiable.append(row["target_path"])
-        elif deep and row["checksum"] and row["checksum_algo"] not in (None, "etag", "s3-etag"):
+            if verdict == "ok":
+                manifest.record_content_verified(row["id"])
+            unverifiable = unverifiable or verdict is None
+        elif not settled and deep and row["checksum"] and row["checksum_algo"] is not None:
             digest = file_hash(path, row["checksum_algo"])
-            if digest and digest.lower() != str(row["checksum"]).lower():
+            if digest is None:
+                unverifiable = True  # an algorithm this Python cannot hash
+            elif digest.lower() == str(row["checksum"]).lower():
+                manifest.record_content_verified(row["id"], against_origin=False)
+            else:
                 report.bad_checksum.append(row["target_path"])
                 requeue(row, path)
                 continue
 
-        report.ok += 1
+        if unverifiable:
+            report.unverifiable.append(row["target_path"])
+        else:
+            report.ok += 1
     return report

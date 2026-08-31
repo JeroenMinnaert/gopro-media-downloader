@@ -100,7 +100,24 @@ def test_target_paths_are_unique_and_immutable(manifest):
     manifest.upsert_file("aaa111", 1, "GX010001.MP4", "2023-07-15/SOMEWHERE_ELSE.MP4", 2000)
     row = manifest.get_file("aaa111", 1)
     assert row["target_path"] == "2023-07-15/GX010001.MP4"
-    assert row["expected_size"] == 1000 or row["expected_size"] == 2000
+    # ...but the size does refresh: only a date repair freezes it (see
+    # test_a_later_sync_does_not_undo_the_repair in test_fixdates.py).
+    assert row["expected_size"] == 2000
+
+
+def test_a_claim_excludes_every_later_claimant(manifest):
+    add(manifest, "aaa111")
+    file_id = manifest.upsert_file("aaa111", 1, "a.MP4", "2023-07-15/a.MP4", 1000)
+
+    assert manifest.claim_item("aaa111")
+    assert not manifest.claim_item("aaa111")  # a second worker must lose
+    assert manifest.claim_file(file_id)
+    assert not manifest.claim_file(file_id)
+
+    # ...until the row is released back to the pool
+    manifest.reset_stale()
+    assert manifest.claim_item("aaa111")
+    assert manifest.claim_file(file_id)
 
 
 def test_remaining_bytes_mixes_resolved_and_unresolved(manifest):
@@ -186,3 +203,42 @@ def test_free_space_falls_back_to_statvfs_when_df_is_unavailable(monkeypatch, tm
     )
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("no df")))
     assert free_space(tmp_path) == 12345
+
+
+def test_a_manifest_from_an_earlier_version_gains_its_new_columns(tmp_path):
+    """Every `fix-dates` column arrived after the first release. A manifest
+    written before them holds a real library's progress -- re-downloading a
+    terabyte because a column was missing is not an acceptable upgrade."""
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    later = (
+        "checksum_state",
+        "origin_checksum",
+        "origin_checksum_algo",
+        "origin_size",
+        "dates_fixed_at",
+        "verified_at",
+    )
+    Manifest(path).close()  # today's schema, then wound back below
+
+    # wind the schema back to what an earlier release wrote, keeping the real
+    # table's constraints and indexes rather than a lossy copy of them
+    conn = sqlite3.connect(path)
+    for column in later:
+        conn.execute(f"ALTER TABLE media_files DROP COLUMN {column}")
+    conn.commit()
+    conn.close()
+
+    with Manifest(path) as upgraded:
+        add(upgraded, "aaa111")
+        file_id = upgraded.upsert_file("aaa111", 1, "a.MP4", "2023-07-15/a.MP4", 1000)
+        now = {r["name"] for r in upgraded.conn.execute("PRAGMA table_info(media_files)")}
+        assert set(later) <= now
+        # and the columns are usable, not merely present
+        upgraded.record_date_fix(file_id, "deadbeef", 1100, "abc-1", 1000, "s3-etag")
+        upgraded.reset_file(file_id)
+        row = upgraded.get_file("aaa111", 1)
+        assert (row["expected_size"], row["checksum"], row["checksum_algo"]) == (
+            1000, "abc-1", "s3-etag",
+        )

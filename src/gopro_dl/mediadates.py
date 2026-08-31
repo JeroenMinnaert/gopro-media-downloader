@@ -561,7 +561,15 @@ def _day_atom_field(fh, body: int, limit: int) -> DateField | None:
     if limit - body > 256:
         return None
     fh.seek(body)
-    text = fh.read(limit - body)
+    payload = fh.read(limit - body)
+    start = 0
+    if len(payload) >= 4 and struct.unpack_from(">H", payload, 0)[0] == len(payload) - 4:
+        # The standard QuickTime metadata shape: uint16 text length and uint16
+        # language code ahead of the text. Its first byte is a NUL for any
+        # realistic length, so reading the payload as bare text finds nothing
+        # and the field goes silently unrepaired.
+        start = 4
+    text = payload[start:]
     stripped = text.split(b"\x00", 1)[0].decode("ascii", "replace").strip()
     for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d"):
         try:
@@ -571,7 +579,7 @@ def _day_atom_field(fh, body: int, limit: int) -> DateField | None:
         if current.tzinfo is not None:
             current = current.astimezone(UTC).replace(tzinfo=None)
         return DateField(
-            "day", body, limit - body, "utc", current, _qt_day, ambiguous_clock=True
+            "day", body + start, len(text), "utc", current, _qt_day, ambiguous_clock=True
         )
     return None
 

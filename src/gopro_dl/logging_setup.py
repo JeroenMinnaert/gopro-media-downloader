@@ -29,25 +29,39 @@ class JsonLinesFormatter(logging.Formatter):
 
 
 def setup_logging(
-    log_dir: Path, console: Console, quiet: bool = False, verbose: bool = False
-) -> Path:
-    """Configure logging; returns the path of this run's JSONL log."""
-    log_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
-    log_path = log_dir / f"run-{stamp}.jsonl"
+    log_dir: Path,
+    console: Console,
+    quiet: bool = False,
+    verbose: bool = False,
+    to_file: bool = True,
+) -> Path | None:
+    """Configure logging; returns the path of this run's JSONL log, if any.
 
+    `to_file=False` is for the commands that touch no destination (`token`,
+    `setup`): writing a run log would create a directory tree under a
+    destination the user has not chosen yet.
+    """
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.DEBUG)
     logger.handlers.clear()
     logger.propagate = False
 
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(JsonLinesFormatter())
-    logger.addHandler(file_handler)
+    log_path = None
+    if to_file:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+        log_path = log_dir / f"run-{stamp}.jsonl"
+        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(JsonLinesFormatter())
+        logger.addHandler(file_handler)
 
+    # These events are structured identifiers ("file_done", "size_learned"),
+    # written for the JSONL log rather than for a person -- on the console they
+    # are noise next to the progress display. Only trouble gets through by
+    # default; --verbose shows the lot.
     rich_handler = RichHandler(console=console, rich_tracebacks=True, show_path=False, show_time=False)
-    rich_handler.setLevel(logging.WARNING if quiet else (logging.DEBUG if verbose else logging.INFO))
+    rich_handler.setLevel(logging.ERROR if quiet else (logging.DEBUG if verbose else logging.WARNING))
     rich_handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(rich_handler)
 

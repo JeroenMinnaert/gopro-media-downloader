@@ -338,3 +338,17 @@ def test_pressing_enter_accepts_the_default_destination(tmp_path, monkeypatch):
     assert code == 0
     assert fake_default.is_dir()
     assert f"GOPRO_DEST={fake_default}" in _env_path(tmp_path).read_text()
+
+
+def test_a_pasted_authorization_header_is_accepted_like_a_bare_token(tmp_path, monkeypatch):
+    """The token file already tolerates the header form; typing it at the
+    prompt must not be answered with "rejected"."""
+    monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: None)
+    monkeypatch.setattr(cli_module, "login_via_browser", lambda *a, **k: None)
+    monkeypatch.setattr(cli_module, "_ask", lambda *a, **k: "Authorization: Bearer eyJreal")
+    monkeypatch.chdir(tmp_path)
+    with respx.mock:
+        _validate_only("eyJreal")
+        code = _run_setup(tmp_path)
+    assert code == 0
+    assert (tmp_path / "tok").read_text().strip() == "eyJreal"

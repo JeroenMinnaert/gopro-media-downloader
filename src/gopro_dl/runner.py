@@ -29,7 +29,6 @@ from .paths import CaptureDateError, date_folder
 @dataclass
 class SyncStats:
     items_seen: int = 0
-    items_new: int = 0
     items_skipped: int = 0
     files_done: int = 0
     files_failed: int = 0
@@ -53,9 +52,6 @@ def refresh_manifest(
 ) -> None:
     """Page through the library and bring the manifest up to date."""
     console.print("[bold]Enumerating media library...[/bold]")
-    seen_before = {
-        row["id"] for row in manifest.pending_items(max_attempts=10**9, columns="i.id")
-    }
 
     def on_page(page: int, total: int) -> None:
         console.print(f"  page {page}/{total}", highlight=False)
@@ -77,8 +73,6 @@ def refresh_manifest(
                 skip = f"bad_captured_at: {exc}"
         if skip:
             stats.items_skipped += 1
-        if item.id and item.id not in seen_before:
-            stats.items_new += 1
         if item.id:
             manifest.upsert_item(item, folder, skip)
 
@@ -171,7 +165,16 @@ class DownloadRunner:
                 if not self.manifest.claim_file(file_row["id"]):
                     continue
 
-                outcome = self.downloader.fetch_file(item, source, file_row, folder)
+                try:
+                    outcome = self.downloader.fetch_file(item, source, file_row, folder)
+                except (AuthExpired, ShuttingDown):
+                    # The file's claim has to be released along with the
+                    # item's. Left 'downloading', this row would refuse the
+                    # claim when the requeued item is picked up again after
+                    # the gate lifts, and the file would be quietly skipped
+                    # for the rest of the run.
+                    self.manifest.mark_pending(file_row["id"], charge_attempt=False)
+                    raise
                 self._record(file_row, outcome)
 
             if self.manifest.refresh_item_state(item.id) == "done":
@@ -252,8 +255,6 @@ class DownloadRunner:
             self.manifest.mark_skipped(file_id, outcome.reason)
             with self._stats_lock:
                 self.stats.files_skipped += 1
-        elif outcome.state == "deferred":
-            self.manifest.mark_pending(file_id, charge_attempt=False)
         else:
             self.manifest.mark_failed(file_id, outcome.reason)
             with self._stats_lock:
@@ -322,7 +323,12 @@ class DownloadRunner:
         self.progress.stop()
 
         def validate(token: str) -> bool:
-            return self.client.validate_token(token) is not None
+            try:
+                return self.client.validate_token(token) is not None
+            except ApiError:
+                # Unreachable API rather than a bad token: keep waiting. A
+                # multi-day run should not end on a network blip.
+                return False
 
         ok = refresh_token_interactively(
             self.tokens,

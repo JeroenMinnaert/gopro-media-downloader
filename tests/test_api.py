@@ -77,6 +77,65 @@ def test_persistent_5xx_gives_up_after_the_attempt_budget(client):
         client.get_download("aaa")
 
 
+@respx.mock
+def test_an_error_body_from_the_cookie_fallback_is_not_a_download_response(client):
+    """The fallback proves the token is not the problem -- it does not turn a
+    500 into a result. Handed back verbatim, the caller parses an error page as
+    JSON and the item fails with a nonsense error."""
+    def responder(request):
+        if "Authorization" in request.headers:
+            return httpx.Response(401, json={})
+        return httpx.Response(500, text="upstream boom")
+
+    respx.get(f"{API_HOST}/media/aaa/download").mock(side_effect=responder)
+    with pytest.raises(ApiError) as exc:
+        client.get_download("aaa")
+    assert "500" in str(exc.value)
+
+
+@respx.mock
+def test_a_systemic_outage_reaches_the_breaker_through_the_client(client):
+    """circuit.py is well covered on its own; this pins that the client
+    actually feeds it, which is what makes an outage pause rather than fail
+    thousands of files."""
+    client.breaker.min_samples = 2
+    respx.get(f"{API_HOST}/media/aaa/download").mock(httpx.Response(503))
+    with pytest.raises(ApiError):
+        client.get_download("aaa")
+    assert client.breaker.is_open
+
+
+@respx.mock
+def test_a_per_file_404_says_nothing_about_gopros_health(client):
+    client.breaker.min_samples = 1
+    respx.get(f"{API_HOST}/media/aaa/download").mock(httpx.Response(404))
+    with pytest.raises(ApiError):
+        client.get_download("aaa")
+    assert not client.breaker.is_open
+
+
+@respx.mock
+def test_a_transport_failure_is_not_reported_as_a_bad_token(client):
+    """"Token rejected" would send the user off fetching a new one for nothing."""
+    respx.get(f"{API_HOST}/media/user").mock(side_effect=httpx.ConnectError("down"))
+    with pytest.raises(ApiError):
+        client.validate_token()
+
+
+def test_retry_after_accepts_an_http_date():
+    """Servers may answer with a date rather than a delay in seconds."""
+    import datetime as dt
+    from email.utils import format_datetime
+
+    from gopro_dl.api import parse_retry_after
+
+    soon = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=30)
+    delay = parse_retry_after(format_datetime(soon))
+    assert delay is not None and 25 <= delay <= 31
+    assert parse_retry_after("garbage") is None
+    assert parse_retry_after(None) is None
+
+
 def test_source_variation_is_chosen_over_every_transcode():
     item = make_item(file_size=1048576)
     files, skip = parse_download_response(load_fixture("download_single"), item)

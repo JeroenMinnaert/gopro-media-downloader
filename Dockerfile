@@ -1,10 +1,10 @@
-FROM python:3.14-slim
+FROM python:3.13-slim
 
 # `cron` is the only extra system package: gopro-dl itself has no native
 # dependencies beyond what pip installs. The interactive `setup` wizard's
 # browser login isn't meant to run in this image (no display) -- create the
 # token/config.env on a machine with one and mount them in instead (see
-# README's "Running in Docker" section).
+# docs/docker.md).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends cron \
     && rm -rf /var/lib/apt/lists/*

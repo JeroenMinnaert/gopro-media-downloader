@@ -311,3 +311,89 @@ def test_an_origin_checksum_that_is_not_an_etag_is_still_preserved(manifest, tmp
     fix_dates(manifest, tmp_path)
 
     assert manifest.get_file("aaa111", 1)["origin_checksum"] == "d41d8cd98f00b204e9800998ecf8427e"
+
+
+def test_clips_with_their_own_distinct_api_times_are_not_slid_as_one_batch(manifest, tmp_path):
+    """The slide exists for a stopped clock, whose signature is GoPro reporting
+    *one* timestamp for the whole batch. Two clips with genuinely different
+    capture times and unrelated skews are not that: anchoring the group on the
+    earliest would leave the later one still wrong, and re-running would move
+    it again."""
+    first = _seed_clip(
+        manifest, tmp_path, "GX010001.MP4", datetime(2023, 7, 15, 10, 0),
+        "one", captured_at="2023-07-15T10:05:00Z",
+    )
+    second = _seed_clip(
+        manifest, tmp_path, "GX010002.MP4", datetime(2023, 7, 15, 11, 0),
+        "two", captured_at="2023-07-15T11:07:00Z",
+    )
+
+    report = fix_dates(manifest, tmp_path)
+
+    assert report.shifted == 0
+    assert read_dates(first).primary == datetime(2023, 7, 15, 10, 5)
+    assert read_dates(second).primary == datetime(2023, 7, 15, 11, 7)
+
+
+def _s3_etag(body: bytes) -> str:
+    import hashlib
+
+    return f"{hashlib.md5(hashlib.md5(body).digest()).hexdigest()}-1"
+
+
+def test_a_requeued_repair_goes_back_to_describing_the_origin(manifest, tmp_path):
+    """`verify --fix` means "fetch this from GoPro again", so the row has to
+    stop describing our repaired copy -- the file about to land is the
+    origin's bytes."""
+    payload = make_jpeg()
+    origin_etag = _s3_etag(payload)
+    item = make_item("aaa111", filename="IMG_0020.jpg", captured_at=CAPTURED_AT,
+                     captured_at_timezone="Europe/Paris")
+    manifest.upsert_item(item, FOLDER)
+    rel = f"{FOLDER}/IMG_0020.jpg"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    manifest.upsert_file("aaa111", 1, "IMG_0020.jpg", rel, len(payload), origin_etag, "s3-etag")
+    manifest.mark_done(manifest.get_file("aaa111", 1)["id"], len(payload))
+
+    fix_dates(manifest, tmp_path)
+    repaired = manifest.get_file("aaa111", 1)
+    assert repaired["checksum_algo"] == "md5" and repaired["dates_fixed_at"]
+
+    path.unlink()  # the file goes missing
+    verify(manifest, tmp_path, fix=True)
+
+    row = manifest.get_file("aaa111", 1)
+    assert row["expected_size"] == len(payload)
+    assert row["checksum"] == origin_etag and row["checksum_algo"] == "s3-etag"
+    assert row["dates_fixed_at"] is None and row["origin_checksum"] is None
+
+
+def test_the_refetched_original_is_not_judged_against_our_repaired_hash(manifest, tmp_path):
+    """The consequence if it did: `verify --deep` calls the freshly downloaded
+    original corrupt, deletes it, fetches it again -- forever."""
+    payload = make_jpeg()
+    origin_etag = _s3_etag(payload)
+    item = make_item("aaa111", filename="IMG_0021.jpg", captured_at=CAPTURED_AT,
+                     captured_at_timezone="Europe/Paris")
+    manifest.upsert_item(item, FOLDER)
+    rel = f"{FOLDER}/IMG_0021.jpg"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    manifest.upsert_file("aaa111", 1, "IMG_0021.jpg", rel, len(payload), origin_etag, "s3-etag")
+    file_id = manifest.get_file("aaa111", 1)["id"]
+    manifest.mark_done(file_id, len(payload))
+
+    fix_dates(manifest, tmp_path)
+    path.unlink()
+    verify(manifest, tmp_path, fix=True)
+
+    # the sync that follows writes the origin's bytes back
+    path.write_bytes(payload)
+    manifest.mark_done(file_id, len(payload), checksum=origin_etag, checksum_algo="s3-etag")
+
+    report = verify(manifest, tmp_path, deep=True, fix=True)
+    assert report.bad_checksum == [] and report.wrong_size == []
+    assert path.exists()

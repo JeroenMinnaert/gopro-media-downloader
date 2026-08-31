@@ -20,7 +20,7 @@ from pathlib import Path
 
 import httpx
 
-from .api import GoProClient
+from .api import GoProClient, backoff_delay
 from .integrity import EtagVerifier, etag_header
 from .logging_setup import log_event
 from .manifest import Manifest
@@ -29,6 +29,7 @@ from .paths import safe_filename, target_path
 
 CHUNK_SIZE = 1024 * 1024
 MAX_URL_REFRESHES = 10
+MAX_REFRESH_BACKOFF = 30.0  # seconds; ten refreshes must not add up to an hour
 
 
 class ShuttingDown(RuntimeError):
@@ -84,6 +85,7 @@ class Downloader:
         on_progress: Callable[[object, int], None] | None = None,
         on_file_start: Callable[[str, int | None], object] | None = None,
         on_file_end: Callable[[object, FileOutcome], None] | None = None,
+        pause: Callable[[float], object] | None = None,
     ) -> None:
         self.client = client
         self.manifest = manifest
@@ -92,6 +94,9 @@ class Downloader:
         self.on_progress = on_progress
         self.on_file_start = on_file_start
         self.on_file_end = on_file_end
+        # Waiting on the shutdown event rather than sleeping keeps Ctrl-C
+        # instant; tests pass their own no-op.
+        self.pause = pause or shutdown.wait
         self._path_lock = threading.Lock()
 
     # -- resolution --------------------------------------------------------
@@ -162,7 +167,10 @@ class Downloader:
         relpath = file_row["target_path"]
         final = self.dest / relpath
         part = final.with_name(final.name + ".part")
-        expected = file_row["expected_size"] or source.size
+        # `or None`: a listing file_size of 0 is not a zero-byte file, it is
+        # a size we do not have -- and treating it as one would satisfy the
+        # "complete .part" check before a single byte was fetched.
+        expected = file_row["expected_size"] or source.size or None
         final.parent.mkdir(parents=True, exist_ok=True)
 
         # Item-level idempotency: a correctly sized file already on disk is
@@ -269,6 +277,13 @@ class Downloader:
                     log_event(
                         logging.INFO, "refreshing_signed_url", path=relpath, refresh=refreshes
                     )
+                    # A CDN-side outage looks exactly like an expired
+                    # signature, and refreshing flat out would burn all ten
+                    # attempts on every queued file within seconds. The
+                    # circuit breaker only watches api.gopro.com, so this is
+                    # the one thing standing between a five-minute S3 blip and
+                    # a run full of failures.
+                    self.pause(min(backoff_delay(refreshes - 1), MAX_REFRESH_BACKOFF))
                     fresh, skip = self.resolve(item, date_folder)
                     if skip:
                         outcome = FileOutcome("skipped", 0, 0, skip)

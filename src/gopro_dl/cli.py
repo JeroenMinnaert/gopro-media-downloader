@@ -13,8 +13,9 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from .api import AuthExpired, GoProClient
-from .auth import AuthGate, TokenError, TokenProvider, token_instructions
+from . import __version__
+from .api import ApiError, AuthExpired, GoProClient
+from .auth import AuthGate, TokenError, TokenProvider, normalize_token, token_instructions
 from .backfill import backfill_etags
 from .browser_login import fetch_cached as fetch_cached_browser_token
 from .browser_login import login as login_via_browser
@@ -36,12 +37,36 @@ console = Console()
 # -- argument parsing ------------------------------------------------------
 
 
+def _iso_date(value: str) -> str:
+    """A YYYY-MM-DD date. Unvalidated, `--since 01-06-2024` silently matches
+    nothing: the manifest compares these as plain strings.
+
+    Normalised rather than just checked, because `fromisoformat` also accepts
+    the compact `20240601` form -- which would pass the check and then match
+    nothing for exactly the same reason.
+    """
+    from datetime import date
+
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a date; use YYYY-MM-DD") from None
+
+
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return number
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gopro-dl",
         description="Download your GoPro Plus cloud library in original quality, "
         "into flat YYYY-MM-DD folders, resumably.",
     )
+    parser.add_argument("--version", action="version", version=f"gopro-dl {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def common(p: argparse.ArgumentParser, needs_manifest: bool = True) -> None:
@@ -60,22 +85,30 @@ def build_parser() -> argparse.ArgumentParser:
             "(IANA name like Europe/Paris, or an offset like +02:00). "
             "A timezone from the API always wins.",
         )
-        p.add_argument("--quiet", action="store_true")
-        p.add_argument("--verbose", action="store_true")
+        p.add_argument("--quiet", action="store_true", help="suppress progress and log lines")
+        p.add_argument(
+            "--verbose", action="store_true", help="print every log event to the console"
+        )
 
     sync = sub.add_parser("sync", help="enumerate the library and download what is missing")
     common(sync)
     sync.add_argument("--concurrency", type=int, help="parallel downloads (default 3, max 8)")
-    sync.add_argument("--limit", type=int, help="only process N media items (for smoke tests)")
-    sync.add_argument("--since", help="only captures on/after this date (YYYY-MM-DD)")
-    sync.add_argument("--until", help="only captures on/before this date (YYYY-MM-DD)")
+    sync.add_argument(
+        "--limit", type=_positive_int, help="only process N media items (for smoke tests)"
+    )
+    sync.add_argument("--since", type=_iso_date, help="only captures on/after this date (YYYY-MM-DD)")
+    sync.add_argument("--until", type=_iso_date, help="only captures on/before this date (YYYY-MM-DD)")
     sync.add_argument("--types", help="comma-separated GoPro media types")
     sync.add_argument("--dry-run", action="store_true", help="plan only, download nothing")
     sync.add_argument("--retry-failed", action="store_true", help="re-queue failed files")
     sync.add_argument(
         "--no-manifest-refresh", action="store_true", help="skip the API enumeration pass"
     )
-    sync.add_argument("--skip-preflight", action="store_true")
+    sync.add_argument(
+        "--skip-preflight",
+        action="store_true",
+        help="skip the token, destination and disk-space checks before downloading",
+    )
     sync.add_argument(
         "--non-interactive",
         action="store_true",
@@ -88,13 +121,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     report = sub.add_parser("report", help="per-file detail")
     common(report)
-    report.add_argument("--failed-only", action="store_true")
+    report.add_argument("--failed-only", action="store_true", help="list only failed files")
     report.add_argument("--csv", help="write CSV to this path")
 
     verify_p = sub.add_parser("verify", help="re-check downloaded files against the manifest")
     common(verify_p)
     verify_p.add_argument("--deep", action="store_true", help="re-hash where a checksum is known")
     verify_p.add_argument("--fix", action="store_true", help="re-queue anything that fails")
+    verify_p.add_argument(
+        "--only-unverified",
+        action="store_true",
+        help="with --deep, skip re-hashing files a previous deep pass already "
+        "proved (sizes are still checked); for finishing an interrupted pass "
+        "rather than for finding bit rot",
+    )
 
     retry = sub.add_parser("retry", help="reset failed files back to pending")
     common(retry)
@@ -104,7 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="fetch origin checksums for files downloaded before content verification",
     )
     common(backfill)
-    backfill.add_argument("--limit", type=int, help="only process N files")
+    backfill.add_argument("--limit", type=_positive_int, help="only process N files")
 
     fix = sub.add_parser(
         "fix-dates",
@@ -112,9 +152,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     common(fix)
     fix.add_argument("--dry-run", action="store_true", help="report what would change only")
-    fix.add_argument("--limit", type=int, help="only process N files")
-    fix.add_argument("--since", help="only captures on/after this date (YYYY-MM-DD)")
-    fix.add_argument("--until", help="only captures on/before this date (YYYY-MM-DD)")
+    fix.add_argument("--limit", type=_positive_int, help="only process N files")
+    fix.add_argument("--since", type=_iso_date, help="only captures on/after this date (YYYY-MM-DD)")
+    fix.add_argument("--until", type=_iso_date, help="only captures on/before this date (YYYY-MM-DD)")
     fix.add_argument(
         "--tolerance",
         type=int,
@@ -163,7 +203,24 @@ def build_parser() -> argparse.ArgumentParser:
 # -- helpers ---------------------------------------------------------------
 
 
-def open_manifest(config: Config) -> Manifest:
+def missing_manifest(config: Config) -> PreflightError | None:
+    """The error to raise when a read-only command finds no manifest.
+
+    Opening one creates it, so a typo in --dest would otherwise have `status`
+    cheerily report an empty library instead of saying where it looked.
+    """
+    if config.manifest_path.exists():
+        return None
+    return PreflightError(
+        f"no manifest at {config.manifest_path} -- "
+        f"has `gopro-dl sync` run against {config.dest}?"
+    )
+
+
+def open_manifest(config: Config, must_exist: bool = False) -> Manifest:
+    """Open the manifest for this destination."""
+    if must_exist and (problem := missing_manifest(config)) is not None:
+        raise problem
     manifest = Manifest(config.manifest_path)
     if not manifest.quick_check():
         raise PreflightError(f"manifest at {config.manifest_path} failed its integrity check")
@@ -240,7 +297,8 @@ def _prompt_for_token() -> str | None:
     token = _ask("\nPaste your gp_access_token value: ", default=None)
     if token is None:
         console.print("\n[yellow]Setup cancelled.[/yellow]")
-    return token
+        return None
+    return normalize_token(token) or token
 
 
 def _detect_timezone() -> str | None:
@@ -317,8 +375,12 @@ def cmd_setup(config: Config, args) -> int:
             # Never chmod a directory we didn't create -- --token-file
             # ~/mytoken would otherwise chmod the user's actual home dir.
             token_file.parent.chmod(0o700)
-        token_file.write_text(token + "\n", encoding="utf-8")
-        token_file.chmod(0o600)
+        # Created 0600 rather than chmod'd afterwards: a write_text() first
+        # would leave the token world-readable for as long as it takes to fix.
+        fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with open(fd, "w", encoding="utf-8") as fh:
+            fh.write(token + "\n")
+        token_file.chmod(0o600)  # an existing file keeps its old mode otherwise
         console.print(f"[green]Wrote[/green] {token_file} (chmod 600)")
     else:
         console.print(f"[dim]Left {token_file} untouched.[/dim]")
@@ -327,7 +389,9 @@ def cmd_setup(config: Config, args) -> int:
     if not getattr(args, "dest", None):
         answer = _ask(f"Destination for media (Enter to accept {dest}): ")
         if answer:
-            dest = Path(answer).expanduser()
+            # Absolute, because this is written to config.env and every later
+            # run would otherwise resolve it against whatever cwd it started in.
+            dest = Path(os.path.abspath(Path(answer).expanduser()))
     dest.mkdir(parents=True, exist_ok=True)
     console.print(f"Destination: {dest}")
 
@@ -510,7 +574,11 @@ def print_summary(manifest: Manifest, config: Config, stats: SyncStats, interrup
     if interrupted:
         console.print("[yellow]Interrupted - re-run `gopro-dl sync` to resume.[/yellow]")
         return 130
-    return 1 if (stats.files_failed or failures or failed_items) else 0
+    # size_mismatches counts too: an incomplete chaptered recording has no
+    # failed *file* (each chapter verified against its own Content-Length) and
+    # no failed *item* without file rows, so without this the run reports the
+    # problem on screen and still exits 0 -- which is all a cron job sees.
+    return 1 if (stats.files_failed or failures or failed_items or stats.size_mismatches) else 0
 
 
 def print_status(manifest: Manifest, config: Config) -> None:
@@ -549,31 +617,36 @@ def print_status(manifest: Manifest, config: Config) -> None:
 
 
 def cmd_status(config: Config) -> int:
-    with open_manifest(config) as manifest:
+    with open_manifest(config, must_exist=True) as manifest:
         print_status(manifest, config)
-        failures = manifest.failures(limit=10)
-        if failures:
-            console.print(f"[red]{len(failures)} failed file(s) shown; see `report --failed-only`.[/red]")
+        failed = manifest.counts()["files"].get("failed", {}).get("n", 0)
+        if failed:
+            console.print(f"[red]{failed} failed file(s); see `gopro-dl report --failed-only`.[/red]")
     return 0
 
 
 def cmd_report(config: Config, args) -> int:
-    with open_manifest(config) as manifest:
+    with open_manifest(config, must_exist=True) as manifest:
         rows = manifest.failures() if args.failed_only else manifest.all_files()
         if args.csv:
             import csv
 
-            with open(args.csv, "w", newline="", encoding="utf-8") as fh:
-                writer = csv.writer(fh)
-                writer.writerow(
-                    ["media_id", "item_number", "target_path", "state", "expected_size",
-                     "actual_size", "attempts", "last_error"]
-                )
-                for row in rows:
+            try:
+                with open(args.csv, "w", newline="", encoding="utf-8") as fh:
+                    writer = csv.writer(fh)
                     writer.writerow(
-                        [row["media_id"], row["item_number"], row["target_path"], row["state"],
-                         row["expected_size"], row["actual_size"], row["attempts"], row["last_error"]]
+                        ["media_id", "item_number", "target_path", "state", "expected_size",
+                         "actual_size", "attempts", "last_error"]
                     )
+                    for row in rows:
+                        writer.writerow(
+                            [row["media_id"], row["item_number"], row["target_path"], row["state"],
+                             row["expected_size"], row["actual_size"], row["attempts"],
+                             row["last_error"]]
+                        )
+            except OSError as exc:
+                console.print(f"[red]Cannot write {args.csv}:[/red] {exc}")
+                return 1
             console.print(f"Wrote {len(rows)} rows to {args.csv}")
             return 0
 
@@ -595,9 +668,20 @@ def cmd_report(config: Config, args) -> int:
 
 
 def cmd_verify(config: Config, args) -> int:
-    with open_manifest(config) as manifest:
-        report = run_verify(manifest, config.dest, deep=args.deep, fix=args.fix)
+    with open_manifest(config, must_exist=True) as manifest:
+        report = run_verify(
+            manifest,
+            config.dest,
+            deep=args.deep,
+            fix=args.fix,
+            only_unverified=args.only_unverified,
+        )
     console.print(f"Checked {report.checked} files: [green]{report.ok} OK[/green]")
+    if report.already_verified:
+        console.print(
+            f"  [dim]{report.already_verified} already proved by an earlier "
+            f"--deep pass; sizes checked, bytes not re-read[/dim]"
+        )
     for path in report.missing:
         console.print(f"  [red]missing[/red] {path}")
     for path, actual, expected in report.wrong_size:
@@ -605,7 +689,10 @@ def cmd_verify(config: Config, args) -> int:
     for path in report.bad_checksum:
         console.print(f"  [red]checksum[/red] {path}")
     if report.unverifiable:
-        console.print(f"  [yellow]{len(report.unverifiable)} file(s) had no size to check against[/yellow]")
+        console.print(
+            f"  [yellow]{len(report.unverifiable)} file(s) had nothing conclusive "
+            f"to check against[/yellow]"
+        )
     if report.problems and args.fix:
         console.print("[yellow]Re-queued the problem files; run `gopro-dl sync`.[/yellow]")
     return 1 if report.problems else 0
@@ -616,7 +703,10 @@ def cmd_backfill(config: Config, args) -> int:
     gate = AuthGate()
     tokens = TokenProvider(config.token, config.token_file)
 
-    with open_manifest(config) as manifest, make_client(config, gate, shutdown, tokens) as client:
+    with (
+        open_manifest(config, must_exist=True) as manifest,
+        make_client(config, gate, shutdown, tokens) as client,
+    ):
         pending = manifest.files_needing_checksum(args.limit)
         if not pending:
             console.print("[green]Every downloaded file already has an origin checksum.[/green]")
@@ -645,7 +735,7 @@ def cmd_backfill(config: Config, args) -> int:
 
 
 def cmd_fix_dates(config: Config, args) -> int:
-    with open_manifest(config) as manifest:
+    with open_manifest(config, must_exist=True) as manifest:
         report = fix_dates(
             manifest,
             config.dest,
@@ -695,7 +785,7 @@ def cmd_fix_dates(config: Config, args) -> int:
 
 
 def cmd_retry(config: Config) -> int:
-    with open_manifest(config) as manifest:
+    with open_manifest(config, must_exist=True) as manifest:
         items, files = manifest.reset_failed()
     console.print(f"Re-queued {files} files and {items} items. Run `gopro-dl sync`.")
     return 0
@@ -714,16 +804,28 @@ def main(argv: list[str] | None = None) -> int:
         if notice:
             console.print(f"[yellow]{notice}[/yellow]")
 
+    # Only `sync` may bring a destination into being. Checked here rather than
+    # where the manifest is opened because setting up the run log would create
+    # the tree under a typo'd --dest before the command ever runs.
+    reads_only = args.needs_manifest and args.command != "sync"
+    if reads_only and (problem := missing_manifest(config)) is not None:
+        console.print(f"[red]Pre-flight failed:[/red] {problem}")
+        return 1
+
     try:
         log_path = setup_logging(
-            config.log_dir, console, quiet=config.quiet, verbose=getattr(args, "verbose", False)
+            config.log_dir,
+            console,
+            quiet=config.quiet,
+            verbose=getattr(args, "verbose", False),
+            to_file=args.needs_manifest,
         )
     except OSError as exc:
         console.print(f"[red]Cannot write logs to {config.log_dir}: {exc}[/red]")
         return 1
 
-    log_event(logging.INFO, "run_start", command=args.command, dest=str(config.dest))
-    if not config.quiet:
+    log_event(logging.DEBUG, "run_start", command=args.command, dest=str(config.dest))
+    if log_path and not config.quiet:
         console.print(f"[dim]log: {log_path}[/dim]")
 
     try:
@@ -756,6 +858,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except PreflightError as exc:
         console.print(f"[red]Pre-flight failed:[/red] {exc}")
+        return 1
+    except ApiError as exc:
+        # Enumeration runs on this thread, outside the workers' own handling,
+        # so a dropped connection lands here.
+        console.print(
+            f"[red]Could not reach api.gopro.com:[/red] {exc}\n"
+            "Progress is saved; re-run to resume once the connection is back."
+        )
         return 1
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted. Progress is saved; re-run to resume.[/yellow]")

@@ -23,6 +23,7 @@ def build(manifest, tmp_path, client, shutdown=None):
         manifest=manifest,
         dest=tmp_path / "media",
         shutdown=shutdown or threading.Event(),
+        pause=lambda _: None,  # no real backoff waits between URL refreshes
     )
 
 
@@ -356,3 +357,129 @@ def test_good_file_on_disk_survives_a_stale_rebuilt_manifest(manifest, tmp_path,
     assert outcome.size_corrected
     assert not route.called  # nothing re-downloaded
     assert final.read_bytes() == big
+
+
+def s3_etag(body: bytes, part_size: int | None = None) -> str:
+    """The ETag S3 serves for `body`: md5 over the parts' raw digests, "-N"."""
+    import hashlib
+
+    size = part_size or max(len(body), 1)
+    digests = [
+        hashlib.md5(body[i:i + size]).digest() for i in range(0, len(body), size)
+    ] or [hashlib.md5(b"").digest()]
+    return f"{hashlib.md5(b''.join(digests)).hexdigest()}-{len(digests)}"
+
+
+@respx.mock
+def test_a_matching_origin_etag_is_recorded_as_verified(manifest, tmp_path, client):
+    """The point of hashing while streaming: the outcome carries proof."""
+    respx.get(CDN).mock(
+        return_value=httpx.Response(200, content=CONTENT, headers={"ETag": f'"{s3_etag(CONTENT)}"'})
+    )
+    item, row = seed(manifest, tmp_path)
+    outcome = build(manifest, tmp_path, client).fetch_file(item, source_of(item), row, "2023-07-15")
+
+    assert outcome.state == "done"
+    assert outcome.checksum_state == "ok"
+    assert outcome.checksum == s3_etag(CONTENT)
+    assert (tmp_path / "media" / "2023-07-15" / "GX010001.MP4").read_bytes() == CONTENT
+
+
+@respx.mock
+def test_bytes_that_do_not_match_the_origin_etag_are_thrown_away(manifest, tmp_path, client):
+    """A full-length body with the wrong content: only the hash can catch it."""
+    respx.get(CDN).mock(
+        return_value=httpx.Response(
+            200, content=CONTENT, headers={"ETag": f'"{s3_etag(b"something else")}"'}
+        )
+    )
+    item, row = seed(manifest, tmp_path)
+    outcome = build(manifest, tmp_path, client).fetch_file(item, source_of(item), row, "2023-07-15")
+
+    assert outcome.state == "failed" and outcome.checksum_state == "mismatch"
+    assert "checksum mismatch" in outcome.reason
+    folder = tmp_path / "media" / "2023-07-15"
+    assert not (folder / "GX010001.MP4").exists()
+    # the bad bytes are gone too, so the retry starts clean rather than resuming
+    assert not (folder / "GX010001.MP4.part").exists()
+
+
+@respx.mock
+def test_an_etag_whose_part_size_is_unknowable_is_not_called_corruption(manifest, tmp_path, client):
+    """Several part sizes fit a 2-part 5 MiB object, so a non-match proves
+    nothing -- the file must still finalise, just unverified."""
+    big = b"B" * (5 * 1024 * 1024)
+    respx.get(CDN).mock(
+        return_value=httpx.Response(200, content=big, headers={"ETag": f'"{s3_etag(big, 3 << 20)}"'})
+    )
+    item, row = seed(manifest, tmp_path, size=len(big))
+    outcome = build(manifest, tmp_path, client).fetch_file(
+        item, source_of(item, size=len(big)), row, "2023-07-15"
+    )
+
+    assert outcome.state == "done"
+    assert (tmp_path / "media" / "2023-07-15" / "GX010001.MP4").read_bytes() == big
+
+
+@respx.mock
+def test_a_url_that_never_stops_expiring_gives_up_instead_of_looping(manifest, tmp_path, client):
+    """A permanent 403 must exhaust the refresh budget, not spin forever."""
+    from gopro_dl.downloader import MAX_URL_REFRESHES
+
+    respx.get(FIXTURE_SOURCE_URL).mock(return_value=httpx.Response(403))
+    api = respx.get(f"{API_HOST}/media/aaa111/download").mock(
+        httpx.Response(200, json=load_fixture("download_single"))
+    )
+    item, row = seed(manifest, tmp_path)
+    outcome = build(manifest, tmp_path, client).fetch_file(
+        item, source_of(item, url=FIXTURE_SOURCE_URL), row, "2023-07-15"
+    )
+
+    assert outcome.state == "failed"
+    assert f"stream failed {MAX_URL_REFRESHES + 1} times" in outcome.reason
+    assert len(api.calls) == MAX_URL_REFRESHES
+
+
+@respx.mock
+def test_a_chapter_that_vanishes_on_refresh_fails_that_file(manifest, tmp_path, client):
+    """The refreshed response no longer lists chapter 1 -- there is nothing
+    left to download, so the file fails rather than resolving to a sibling."""
+    respx.get(CDN).mock(return_value=httpx.Response(403))
+    download = load_fixture("download_single")
+    for variation in download["_embedded"]["variations"]:
+        if variation["label"] == "source":
+            variation["label"] = "mp4_low"  # the source is simply gone now
+    respx.get(f"{API_HOST}/media/aaa111/download").mock(httpx.Response(200, json=download))
+
+    item, row = seed(manifest, tmp_path)
+    outcome = build(manifest, tmp_path, client).fetch_file(item, source_of(item), row, "2023-07-15")
+
+    assert outcome.state == "skipped"
+
+
+@respx.mock
+def test_an_oversized_part_is_restarted_rather_than_trusted(manifest, tmp_path, client):
+    """A .part longer than the file cannot be salvaged by resuming from its
+    end -- those extra bytes would survive into the final file."""
+    respx.get(CDN).mock(side_effect=ranged)
+    item, row = seed(manifest, tmp_path)
+    part = tmp_path / "media" / "2023-07-15" / "GX010001.MP4.part"
+    part.parent.mkdir(parents=True)
+    part.write_bytes(CONTENT + b"junk")
+
+    outcome = build(manifest, tmp_path, client).fetch_file(item, source_of(item), row, "2023-07-15")
+
+    assert outcome.state == "done"
+    assert (tmp_path / "media" / "2023-07-15" / "GX010001.MP4").read_bytes() == CONTENT
+
+
+@respx.mock
+def test_a_body_longer_than_expected_is_deleted_not_truncated(manifest, tmp_path, client):
+    respx.get(CDN).mock(return_value=httpx.Response(200, content=CONTENT + b"extra"))
+    item, row = seed(manifest, tmp_path)
+    outcome = build(manifest, tmp_path, client).fetch_file(item, source_of(item), row, "2023-07-15")
+
+    folder = tmp_path / "media" / "2023-07-15"
+    assert outcome.state == "failed" and "size mismatch" in outcome.reason
+    assert not (folder / "GX010001.MP4").exists()
+    assert not (folder / "GX010001.MP4.part").exists()
