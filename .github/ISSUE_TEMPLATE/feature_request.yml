@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest a change or addition
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This tool is deliberately narrow: back up a GoPro Plus library to disk,
+        resumably and verifiably. Requests that stay inside that scope have a
+        much better chance than ones that widen it — it is not going to grow
+        into a media manager, an uploader, or a transcoder.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you hitting?
+      description: >
+        Describe the situation, not the solution. What are you trying to do,
+        and what makes it awkward or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+      description: If you have a specific flag, command, or behaviour in mind, sketch it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried instead?
+      description: >
+        Existing flags, a wrapper script, another tool. If something almost
+        works, say what falls short.
+
+  - type: checkboxes
+    id: offer
+    attributes:
+      label: Would you be willing to implement it?
+      options:
+        - label: I'd be up for opening a PR (see CONTRIBUTING.md)

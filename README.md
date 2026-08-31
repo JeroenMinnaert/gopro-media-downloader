@@ -14,6 +14,15 @@ keeps a manifest so an interrupted run picks up exactly where it stopped.
 Proven on a real library: 1,217 items / 1.4 TiB, including 22 chaptered
 recordings and a 4-chapter 13.6 GiB clip.
 
+> **Not affiliated with, endorsed by, or supported by GoPro, Inc.** "GoPro" and
+> "GoPro Plus" are trademarks of their respective owner and are used here only
+> to say what this tool talks to. It drives the same undocumented internal API
+> the GoPro web app uses, which can change or disappear without notice and take
+> this tool with it — see [API notes](#api-notes-things-that-will-bite-you) for
+> the parts already known to be sharp. Intended for downloading media from your
+> own account. Provided as-is under the MIT licence, with no warranty; you are
+> responsible for your own use of it and for your own backups.
+
 ```
 ~/Downloads/GoPro/            # the default destination -- override with --dest
 ├── 2023-07-14/
@@ -496,6 +505,12 @@ Everything else is configured the normal way, via environment variables in
 the compose file (`GOPRO_DEST`, `GOPRO_DL_HOME`, `GOPRO_TIMEZONE`, ...) or
 the `config.env` you copied in — see `.env.example` for the full list.
 
+There is no public prebuilt image: `docker-publish.yml` pushes to whatever
+account the repo's own `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` secrets name, so
+it is maintainer-specific and a fork without those secrets will simply fail the
+login step. Build locally (`docker compose up -d --build`, as above), or set
+those two secrets on your fork to push to your own registry.
+
 ## API notes (things that will bite you)
 
 Established by inspecting a real account. Each of these caused a bug that
@@ -540,6 +555,11 @@ looked like success:
    Measured 32.5 MiB/s over 802.11ax vs 75 MiB/s over gigabit ethernet — 2.3x.
 
 ## Development
+
+Setup, house rules, and what to put in a bug report:
+[CONTRIBUTING.md](CONTRIBUTING.md). Found a way to leak the token or write
+outside `--dest`? Report it privately — [SECURITY.md](SECURITY.md), not an
+issue.
 
 ```bash
 .venv/bin/pip install -e '.[dev]'

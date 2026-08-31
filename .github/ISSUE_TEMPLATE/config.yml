@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/JeroenMinnaert/gopro-media-downloader/security/advisories/new
+    about: Report privately instead of opening an issue. See SECURITY.md.
+  - name: Question or usage help
+    url: https://github.com/JeroenMinnaert/gopro-media-downloader#readme
+    about: Token setup, NAS/SMB notes, and the integrity model are covered in the README in detail. Read it before filing — most surprises are documented there.
