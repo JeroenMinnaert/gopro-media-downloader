@@ -219,3 +219,36 @@ def test_login_never_raises_when_goto_fails(tmp_path, monkeypatch):
 
     _patch_playwright(monkeypatch, FakeChromium(context=BrokenContext()))
     assert login(FakeConsole(), tmp_path / "profile") is None
+
+
+def test_a_cancelled_login_leaves_no_profile_behind(tmp_path, monkeypatch):
+    """`setup` can be abandoned at the browser window. Nobody should be left
+    holding state for a session they never created."""
+    profile = tmp_path / "browser-profile"
+    monkeypatch.setattr(browser_login, "_run_login", lambda *a, **k: None)
+
+    assert browser_login.login(FakeConsole(), profile) is None
+    assert not profile.exists()
+
+
+def test_a_real_profile_is_never_removed(tmp_path, monkeypatch):
+    """Only an empty directory goes: a profile with a session in it stays put
+    even when this particular login came back empty-handed."""
+    profile = tmp_path / "browser-profile"
+
+    def writes_a_profile(console, profile_dir, timeout):
+        (profile_dir / "Default").mkdir(parents=True, exist_ok=True)
+        return None
+
+    monkeypatch.setattr(browser_login, "_run_login", writes_a_profile)
+
+    assert browser_login.login(FakeConsole(), profile) is None
+    assert (profile / "Default").exists()
+
+
+def test_a_successful_login_keeps_its_profile(tmp_path, monkeypatch):
+    profile = tmp_path / "browser-profile"
+    monkeypatch.setattr(browser_login, "_run_login", lambda *a, **k: "tok")
+
+    assert browser_login.login(FakeConsole(), profile) == "tok"
+    assert profile.exists()

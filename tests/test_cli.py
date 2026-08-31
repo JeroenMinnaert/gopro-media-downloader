@@ -218,3 +218,35 @@ def test_items_without_a_timezone_fall_back_to_the_configured_one(tmp_path, caps
     assert "no captured_at_timezone" in capsys.readouterr().out
     with Manifest(dest / ".gopro-dl" / "manifest.db") as m:
         assert m.get_item("zzz999")["date_folder"] == "2024-03-02"
+
+
+# -- a run that cannot start leaves nothing behind -------------------------
+
+
+def test_sync_without_a_token_creates_nothing(tmp_path, capsys):
+    """Someone trying the tool out before configuring it types `sync` first.
+    Failing after the run log exists leaves a directory tree under a
+    destination they never got to use."""
+    dest = tmp_path / "media"
+    assert main(["sync", "--dest", str(dest)]) == 1
+    assert "No GoPro token found" in capsys.readouterr().out
+    assert not dest.exists()
+
+
+def test_backfill_and_token_check_before_creating_state(tmp_path, capsys):
+    dest = tmp_path / "media"
+    for command in ("backfill-etags", "token"):
+        assert main([command, "--dest", str(dest)]) == 1
+    assert not dest.exists()
+
+
+def test_a_token_that_exists_still_reaches_the_command(tmp_path):
+    """The precondition must not swallow the commands it guards."""
+    dest = tmp_path / "media"
+    with respx.mock:
+        respx.get(f"{API_HOST}/media/user").mock(httpx.Response(200, json={"id": "u1"}))
+        respx.get(f"{API_HOST}/media/search").mock(
+            httpx.Response(200, json={"_embedded": {"media": []}, "_pages": {"total_pages": 1}})
+        )
+        assert run("sync", dest=dest) == 0
+    assert (dest / ".gopro-dl" / "manifest.db").exists()

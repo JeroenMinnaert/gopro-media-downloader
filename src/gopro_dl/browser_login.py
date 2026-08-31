@@ -155,8 +155,16 @@ def login(console, profile_dir: Path, timeout_seconds: float = 300.0) -> str | N
     """
     _ensure_profile_dir(profile_dir)
     try:
-        return _run_login(console, profile_dir, timeout_seconds)
+        token = _run_login(console, profile_dir, timeout_seconds)
     except Exception as exc:
         log_event(logging.WARNING, "browser_login_failed", error=str(exc))
         console.print(f"[yellow]Browser login failed: {exc}[/yellow]")
-        return None
+        token = None
+    if token is None:
+        # A login that never got as far as writing a profile leaves an empty
+        # directory behind, and someone who cancels `setup` should not be left
+        # holding state for a session they never created. rmdir only succeeds
+        # while it is empty, so a real profile is never touched.
+        with contextlib.suppress(OSError):
+            profile_dir.rmdir()
+    return token
