@@ -47,6 +47,8 @@ dev = [
 Homepage = "https://github.com/JeroenMinnaert/gopro-media-downloader"
 Repository = "https://github.com/JeroenMinnaert/gopro-media-downloader"
 Issues = "https://github.com/JeroenMinnaert/gopro-media-downloader/issues"
+Documentation = "https://github.com/JeroenMinnaert/gopro-media-downloader/blob/main/docs/README.md"
+Changelog = "https://github.com/JeroenMinnaert/gopro-media-downloader/blob/main/CHANGELOG.md"
 
 [project.scripts]
 gopro-dl = "gopro_dl.cli:main"
@@ -69,7 +71,6 @@ select = ["E", "F", "W", "I", "B", "SIM", "UP", "C4", "RUF"]
 ignore = [
     "E501",     # long lines: the existing style runs to ~100, enforced by formatter not linter
     "RUF059",   # unused unpacked variable reads fine in tests
-    "PYI034",   # __enter__ returning the concrete class is intentional and clear
 ]
 
 [tool.ruff.lint.per-file-ignores]

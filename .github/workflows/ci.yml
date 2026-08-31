@@ -67,10 +67,10 @@ jobs:
       - name: No token can be resolved from a clean environment
         # Guards the config precedence: without GOPRO_* or a config file the
         # tool must refuse rather than silently reach for something
-        # unexpected. GOPRO_DL_HOME is forced too: this editable install
-        # would otherwise auto-detect the checkout as a dev sandbox (see
-        # appdirs.py), which resolves from __file__, not HOME -- pinning it
-        # keeps this check deterministic regardless of that detection.
+        # unexpected. GOPRO_DL_HOME is pinned too: locations.py walks up from
+        # the working directory looking for an .envrc that sets it, and the
+        # repo checks one in -- pinning keeps the check deterministic wherever
+        # the runner happens to start.
         run: |
           cd "$(mktemp -d)"
           if HOME="$(mktemp -d)" GOPRO_DL_HOME="$(mktemp -d)" gopro-dl token; then
