@@ -1,19 +1,17 @@
 name: Docker Publish
 
-# Triggered by CI's completion rather than by push directly, so a build
-# only ever gets published once the full test matrix has passed on main --
-# push and this workflow both firing on the same push event would give no
-# such ordering guarantee.
+# Triggered by the Release workflow's completion, so an image is only ever
+# published for a version tag whose full matrix, build and PyPI publish
+# succeeded. Triggering on the tag push directly would race those checks and
+# could ship an image for a release that failed.
 on:
   workflow_run:
-    workflows: ["CI"]
-    branches: [main]
+    workflows: ["Release"]
     types: [completed]
-  workflow_dispatch:
 
-# A new push supersedes an in-flight publish of the same branch.
+# A re-tag supersedes an in-flight publish of the same version.
 concurrency:
-  group: docker-publish-${{ github.ref }}
+  group: docker-publish-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: true
 
 permissions:
@@ -22,19 +20,19 @@ permissions:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    # `workflow_run`'s `branches:` filter matches the *head* branch of the
-    # triggering run, and CI also runs on pull_request -- a fork's own `main`
-    # would satisfy it. So the origin is re-checked here: only a push to this
-    # repository's main may publish, never a PR from a fork.
+    # Only a successful Release run, from a tag, in this repository. The
+    # head_branch of a tag-triggered run is the tag name, which is also where
+    # the version below comes from; a Release started any other way (a manual
+    # dispatch from a branch, say) is not a release and publishes nothing.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
@@ -44,6 +42,23 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Work out the image tags
+        id: meta
+        env:
+          TAG: ${{ github.event.workflow_run.head_branch }}
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/gopro-media-downloader
+        run: |
+          version="${TAG#v}"
+          tags="${IMAGE}:${version}"
+          case "$version" in
+            # A pre-release is pullable by its exact version and nothing else:
+            # it must not become what `:latest` or `:0.1` resolve to.
+            *-*) ;;
+            *) tags="${tags},${IMAGE}:${version%.*},${IMAGE}:latest" ;;
+          esac
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+          echo "publishing ${tags}"
 
       - name: Build and push
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
@@ -55,8 +70,6 @@ jobs:
           # build.
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/gopro-media-downloader:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/gopro-media-downloader:${{ github.event.workflow_run.head_sha || github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

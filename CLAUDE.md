@@ -54,14 +54,18 @@ point from outside the source tree and checks that a clean environment (no
 `GOPRO_*` vars, no config file) yields no usable token.
 
 A separate workflow (`.github/workflows/docker-publish.yml`) builds the
-`Dockerfile` (linux/amd64 + linux/arm64) and pushes it to Docker Hub as
-`<DOCKERHUB_USERNAME>/gopro-media-downloader:latest` and `:<sha>`. It
-triggers via `workflow_run` on the `CI` workflow finishing on `main` (or via
-manual dispatch), and only pushes when that CI run's conclusion was
-`success` — a broken test matrix never reaches Docker Hub. Because of this,
-it always publishes after a successful `main` CI run rather than only when
-Docker-relevant paths changed (dropped in favor of the simpler,
-harder-to-get-wrong gate). It authenticates with the repo secrets
+`Dockerfile` (linux/amd64 + linux/arm64) and pushes it to Docker Hub. **Images
+are cut from releases, not from `main`:** it triggers via `workflow_run` on the
+*Release* workflow completing, and publishes only when that run succeeded, came
+from a tag push, and originated in this repository. So an image exists exactly
+when a version exists, and it has been through the same matrix, build and PyPI
+publish. Triggering on the tag push directly would race those checks and could
+ship an image for a release that failed.
+
+The tags come from the version: `v0.1.1` publishes `:0.1.1`, `:0.1` and
+`:latest`, so `:latest` means the newest release rather than the newest commit.
+A pre-release (`v0.2.0-rc1`) publishes only its exact version — it must not
+become what `:latest` or `:0.2` resolve to. It authenticates with the repo secrets
 `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token, not
 the account password) — create the target repository on Docker Hub as
 Private *before* the first push, since Docker Hub does not necessarily

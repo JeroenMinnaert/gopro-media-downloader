@@ -6,7 +6,13 @@ Notable changes to this project. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- Docker images are cut from releases instead of from every commit on `main`.
+  A `v*` tag now publishes `:<version>`, `:<major.minor>` and `:latest` once
+  the release itself has succeeded, so `:latest` means the newest release
+  rather than the newest commit, and a version can be pinned. A pre-release
+  publishes only its exact version.
 
 ## [0.1.1] — 2026-08-31
 
