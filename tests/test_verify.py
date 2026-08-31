@@ -154,3 +154,50 @@ def test_a_deep_verify_does_not_overwrite_the_date_repair_verdict(manifest, tmp_
 
     verify(manifest, tmp_path, deep=True)
     assert manifest.get_file("aaa111", 1)["checksum_state"] == "local_after_date_fix"
+
+
+def test_only_unverified_skips_the_files_a_previous_pass_proved(manifest, tmp_path):
+    """Re-reading every byte of a terabyte to re-confirm what was confirmed
+    last night is the difference between a usable command and one nobody runs."""
+    path = seed_done(manifest, tmp_path, checksum=s3_etag(CONTENT), algo="s3-etag")
+    assert verify(manifest, tmp_path, deep=True).ok == 1
+    assert manifest.get_file("aaa111", 1)["verified_at"]
+
+    # corrupt the bytes: a skipped file is not re-hashed, so this goes unseen
+    path.write_bytes(b"y" * len(CONTENT))
+    report = verify(manifest, tmp_path, deep=True, only_unverified=True)
+    assert report.already_verified == 1 and report.bad_checksum == []
+    # ...but a full pass still finds it, which is why this is not the default
+    assert verify(manifest, tmp_path, deep=True).bad_checksum == [
+        "2023-07-15/GX010001.MP4"
+    ]
+
+
+def test_only_unverified_still_checks_sizes(manifest, tmp_path):
+    """Skipping the hash is not skipping the file: existence and size are a
+    stat, and catch the failures that actually happen."""
+    path = seed_done(manifest, tmp_path, checksum=s3_etag(CONTENT), algo="s3-etag")
+    verify(manifest, tmp_path, deep=True)
+
+    path.write_bytes(CONTENT[:10])
+    report = verify(manifest, tmp_path, deep=True, only_unverified=True)
+    assert report.wrong_size and report.already_verified == 0
+
+
+def test_a_redownload_voids_the_standing_proof(manifest, tmp_path):
+    """Whatever was proved described the old bytes."""
+    seed_done(manifest, tmp_path, checksum=s3_etag(CONTENT), algo="s3-etag")
+    verify(manifest, tmp_path, deep=True)
+    file_id = manifest.get_file("aaa111", 1)["id"]
+
+    manifest.mark_done(file_id, len(CONTENT))
+    assert manifest.get_file("aaa111", 1)["verified_at"] is None
+
+
+def test_a_date_repair_voids_the_standing_proof(manifest, tmp_path):
+    seed_done(manifest, tmp_path, checksum=s3_etag(CONTENT), algo="s3-etag")
+    verify(manifest, tmp_path, deep=True)
+    file_id = manifest.get_file("aaa111", 1)["id"]
+
+    manifest.record_date_fix(file_id, "deadbeef", len(CONTENT) + 20, "abc-1", len(CONTENT))
+    assert manifest.get_file("aaa111", 1)["verified_at"] is None

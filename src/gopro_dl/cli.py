@@ -128,6 +128,13 @@ def build_parser() -> argparse.ArgumentParser:
     common(verify_p)
     verify_p.add_argument("--deep", action="store_true", help="re-hash where a checksum is known")
     verify_p.add_argument("--fix", action="store_true", help="re-queue anything that fails")
+    verify_p.add_argument(
+        "--only-unverified",
+        action="store_true",
+        help="with --deep, skip re-hashing files a previous deep pass already "
+        "proved (sizes are still checked); for finishing an interrupted pass "
+        "rather than for finding bit rot",
+    )
 
     retry = sub.add_parser("retry", help="reset failed files back to pending")
     common(retry)
@@ -662,8 +669,19 @@ def cmd_report(config: Config, args) -> int:
 
 def cmd_verify(config: Config, args) -> int:
     with open_manifest(config, must_exist=True) as manifest:
-        report = run_verify(manifest, config.dest, deep=args.deep, fix=args.fix)
+        report = run_verify(
+            manifest,
+            config.dest,
+            deep=args.deep,
+            fix=args.fix,
+            only_unverified=args.only_unverified,
+        )
     console.print(f"Checked {report.checked} files: [green]{report.ok} OK[/green]")
+    if report.already_verified:
+        console.print(
+            f"  [dim]{report.already_verified} already proved by an earlier "
+            f"--deep pass; sizes checked, bytes not re-read[/dim]"
+        )
     for path in report.missing:
         console.print(f"  [red]missing[/red] {path}")
     for path, actual, expected in report.wrong_size:

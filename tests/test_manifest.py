@@ -218,6 +218,7 @@ def test_a_manifest_from_an_earlier_version_gains_its_new_columns(tmp_path):
         "origin_checksum_algo",
         "origin_size",
         "dates_fixed_at",
+        "verified_at",
     )
     Manifest(path).close()  # today's schema, then wound back below
 

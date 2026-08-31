@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS media_files (
   -- what the origin holds, kept aside once `fix-dates` edits the local bytes
   origin_checksum TEXT,
   origin_checksum_algo TEXT,
+  verified_at TEXT,
   origin_size INTEGER,
   dates_fixed_at TEXT,
   target_path TEXT NOT NULL UNIQUE,
@@ -116,6 +117,7 @@ class Manifest:
                 "origin_checksum_algo TEXT",
                 "origin_size INTEGER",
                 "dates_fixed_at TEXT",
+                "verified_at TEXT",
             ):
                 if column.split()[0] not in existing:
                     self.conn.execute(f"ALTER TABLE media_files ADD COLUMN {column}")
@@ -462,7 +464,8 @@ class Manifest:
                 f"{correction}"
                 "checksum=COALESCE(?, checksum), checksum_algo=COALESCE(?, checksum_algo), "
                 "checksum_state=COALESCE(?, checksum_state), completed_at=?, "
-                "last_error=NULL WHERE id=?",
+                # freshly written bytes carry no standing deep-verify proof
+                "last_error=NULL, verified_at=NULL WHERE id=?",
                 params,
             )
             self.conn.commit()
@@ -530,7 +533,7 @@ class Manifest:
                 "origin_checksum_algo=COALESCE(origin_checksum_algo, ?), "
                 "origin_size=COALESCE(origin_size, ?), "
                 "checksum=?, checksum_algo='md5', checksum_state='local_after_date_fix', "
-                "expected_size=?, actual_size=?, dates_fixed_at=? "
+                "expected_size=?, actual_size=?, dates_fixed_at=?, verified_at=NULL "
                 "WHERE id=?",
                 (
                     origin_checksum,
@@ -556,20 +559,24 @@ class Manifest:
             )
             self.conn.commit()
 
-    def record_content_verified(self, file_id: int) -> None:
-        """A deep verify proved the bytes against the origin's ETag.
+    def record_content_verified(self, file_id: int, against_origin: bool = True) -> None:
+        """A deep verify read the whole file and its hash came out right.
 
-        Only promotes a file that had no verdict yet: `local_after_date_fix`
-        says something different and true, and must not be overwritten. Without
-        this the proof is computed and thrown away -- a resumed file stays
-        "size-only" in `status` however often it is re-hashed.
+        `verified_at` is the timestamp `--only-unverified` skips on. The
+        `checksum_state` promotion is narrower: only a file with no verdict
+        yet, and only against the origin's own ETag -- `local_after_date_fix`
+        says something different and true, and re-hashing a repaired file
+        proves it still matches our copy, not GoPro's.
         """
         with self._lock:
-            self.conn.execute(
-                "UPDATE media_files SET checksum_state='ok' WHERE id=? AND "
-                "COALESCE(checksum_state,'not_checked') IN ('not_checked','unverified')",
-                (file_id,),
-            )
+            self.conn.execute("UPDATE media_files SET verified_at=? WHERE id=?",
+                              (_now(), file_id))
+            if against_origin:
+                self.conn.execute(
+                    "UPDATE media_files SET checksum_state='ok' WHERE id=? AND "
+                    "COALESCE(checksum_state,'not_checked') IN ('not_checked','unverified')",
+                    (file_id,),
+                )
             self.conn.commit()
 
     def checksum_summary(self) -> dict[str, int]:
@@ -638,7 +645,7 @@ class Manifest:
                   checksum_state=CASE WHEN dates_fixed_at IS NOT NULL
                     THEN NULL ELSE checksum_state END,
                   origin_checksum=NULL, origin_checksum_algo=NULL, origin_size=NULL,
-                  dates_fixed_at=NULL
+                  dates_fixed_at=NULL, verified_at=NULL
                 WHERE id=?
                 """,
                 (file_id,),

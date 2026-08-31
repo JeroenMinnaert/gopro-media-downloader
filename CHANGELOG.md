@@ -50,6 +50,10 @@ Notable changes to this project. The format follows
 ### Added
 
 - `gopro-dl --version`, which the bug-report template asks reporters for.
+- `verify --deep --only-unverified` skips re-hashing files an earlier deep
+  pass already proved, for finishing an interrupted pass over a library where
+  re-reading every byte takes hours. Sizes are still checked on everything, and
+  a re-download or a date repair clears the standing proof.
 
 ### Changed
 

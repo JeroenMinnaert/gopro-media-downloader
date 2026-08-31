@@ -45,14 +45,24 @@ Resumed downloads can't be hashed from byte zero, so they're recorded
 `unverified` and confirmed later by `verify --deep`.
 
 ```bash
-gopro-dl status                # counts by integrity state
-gopro-dl backfill-etags        # fetch checksums for files downloaded earlier
-gopro-dl verify --deep         # re-read from disk and check against the origin
+gopro-dl status                       # counts by integrity state
+gopro-dl backfill-etags               # fetch checksums for files downloaded earlier
+gopro-dl verify --deep                # re-read from disk and check against the origin
+gopro-dl verify --deep --only-unverified   # ...skipping what a past pass proved
 ```
 
 `backfill-etags` costs one API call per item plus one HEAD per file and moves
 no media. `verify --deep` re-reads everything (~3 hours per TiB over gigabit) —
 run it at the end, not during a download, or the two compete for bandwidth.
+
+A file that passes a deep check is stamped with the time it passed, and
+`--only-unverified` skips the *hashing* for those on the next pass — sizes are
+a `stat` and are still checked on everything. That turns "finish the pass I
+interrupted" and "check what my resumed downloads left unproven" into minutes
+instead of hours. It is not the way to find bit rot: a file that was fine last
+month is precisely what rot happens to, so a periodic sweep wants the full
+`--deep`. A re-download or a `fix-dates` repair clears the stamp, since
+whatever was proved described the older bytes.
 
 ---
 
