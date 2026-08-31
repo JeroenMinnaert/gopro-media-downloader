@@ -35,13 +35,17 @@ Notable changes to this project. The format follows
 - Signed-URL refreshes now back off, so a CDN-side outage no longer burns every
   file's refresh budget within seconds.
 - `report --csv` to an unwritable path is an error message, not a traceback.
+- `verify --deep` threw away the proof it computed: a resumed file, which
+  cannot be hashed while streaming, stayed "size-only" in `status` however
+  often it was re-hashed against the origin's ETag.
 - The progress bar counted failed files as done.
 
 ### Changed
 
 - `status`, `report`, `verify`, `retry`, `backfill-etags` and `fix-dates` no
-  longer create an empty manifest: against a typo'd `--dest` they now say where
-  they looked instead of reporting an empty library.
+  longer create anything at a destination they were only meant to read:
+  against a typo'd `--dest` they say where they looked instead of reporting an
+  empty library, and leave no manifest or log directory behind.
 - Structured log events (`file_done`, `size_learned`, …) are written to the
   JSONL run log and no longer printed to the console at default verbosity;
   `--verbose` shows them.

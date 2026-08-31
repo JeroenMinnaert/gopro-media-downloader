@@ -49,7 +49,8 @@ def test_a_destination_with_no_manifest_says_so_instead_of_inventing_one(
     dest = tmp_path / "typo"
     assert run(command, dest=dest) == 1
     assert "no manifest" in capsys.readouterr().out
-    assert not (dest / ".gopro-dl" / "manifest.db").exists()
+    # and nothing at all was left behind -- not even a log directory
+    assert not dest.exists()
 
 
 def test_sync_still_creates_the_manifest_it_needs(tmp_path):

@@ -547,6 +547,22 @@ class Manifest:
             )
             self.conn.commit()
 
+    def record_content_verified(self, file_id: int) -> None:
+        """A deep verify proved the bytes against the origin's ETag.
+
+        Only promotes a file that had no verdict yet: `local_after_date_fix`
+        says something different and true, and must not be overwritten. Without
+        this the proof is computed and thrown away -- a resumed file stays
+        "size-only" in `status` however often it is re-hashed.
+        """
+        with self._lock:
+            self.conn.execute(
+                "UPDATE media_files SET checksum_state='ok' WHERE id=? AND "
+                "COALESCE(checksum_state,'not_checked') IN ('not_checked','unverified')",
+                (file_id,),
+            )
+            self.conn.commit()
+
     def checksum_summary(self) -> dict[str, int]:
         with self._lock:
             rows = self.conn.execute(

@@ -132,3 +132,25 @@ def test_a_requeued_file_gets_its_attempts_back(manifest, tmp_path):
     verify(manifest, tmp_path, fix=True)
     after = manifest.get_file("aaa111", 1)
     assert after["state"] == "pending" and after["attempts"] == 0
+
+
+def test_a_deep_verify_records_the_proof_it_computed(manifest, tmp_path):
+    """Otherwise a resumed file -- which cannot be hashed while streaming --
+    stays "size-only" in `status` no matter how often it is re-hashed."""
+    seed_done(manifest, tmp_path, checksum=s3_etag(CONTENT), algo="s3-etag")
+    file_id = manifest.get_file("aaa111", 1)["id"]
+    manifest.set_checksum(file_id, s3_etag(CONTENT), "s3-etag", state="unverified")
+
+    assert verify(manifest, tmp_path, deep=True).ok == 1
+    assert manifest.get_file("aaa111", 1)["checksum_state"] == "ok"
+
+
+def test_a_deep_verify_does_not_overwrite_the_date_repair_verdict(manifest, tmp_path):
+    """`local_after_date_fix` says something different and still true."""
+    digest = hashlib.md5(CONTENT).hexdigest()
+    seed_done(manifest, tmp_path, checksum=digest, algo="md5")
+    file_id = manifest.get_file("aaa111", 1)["id"]
+    manifest.set_checksum(file_id, digest, "md5", state="local_after_date_fix")
+
+    verify(manifest, tmp_path, deep=True)
+    assert manifest.get_file("aaa111", 1)["checksum_state"] == "local_after_date_fix"

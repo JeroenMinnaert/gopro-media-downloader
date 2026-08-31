@@ -194,18 +194,24 @@ def build_parser() -> argparse.ArgumentParser:
 # -- helpers ---------------------------------------------------------------
 
 
-def open_manifest(config: Config, must_exist: bool = False) -> Manifest:
-    """Open the manifest for this destination.
+def missing_manifest(config: Config) -> PreflightError | None:
+    """The error to raise when a read-only command finds no manifest.
 
-    `must_exist` is for the commands that only ever read it: opening one
-    creates the file, so a typo in --dest would otherwise have `status` cheerily
-    report an empty library instead of saying it looked in the wrong place.
+    Opening one creates it, so a typo in --dest would otherwise have `status`
+    cheerily report an empty library instead of saying where it looked.
     """
-    if must_exist and not config.manifest_path.exists():
-        raise PreflightError(
-            f"no manifest at {config.manifest_path} -- "
-            f"has `gopro-dl sync` run against {config.dest}?"
-        )
+    if config.manifest_path.exists():
+        return None
+    return PreflightError(
+        f"no manifest at {config.manifest_path} -- "
+        f"has `gopro-dl sync` run against {config.dest}?"
+    )
+
+
+def open_manifest(config: Config, must_exist: bool = False) -> Manifest:
+    """Open the manifest for this destination."""
+    if must_exist and (problem := missing_manifest(config)) is not None:
+        raise problem
     manifest = Manifest(config.manifest_path)
     if not manifest.quick_check():
         raise PreflightError(f"manifest at {config.manifest_path} failed its integrity check")
@@ -777,6 +783,14 @@ def main(argv: list[str] | None = None) -> int:
         notice = apply_network_manifest_redirect(config)
         if notice:
             console.print(f"[yellow]{notice}[/yellow]")
+
+    # Only `sync` may bring a destination into being. Checked here rather than
+    # where the manifest is opened because setting up the run log would create
+    # the tree under a typo'd --dest before the command ever runs.
+    reads_only = args.needs_manifest and args.command != "sync"
+    if reads_only and (problem := missing_manifest(config)) is not None:
+        console.print(f"[red]Pre-flight failed:[/red] {problem}")
+        return 1
 
     try:
         log_path = setup_logging(

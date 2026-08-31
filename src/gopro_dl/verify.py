@@ -74,6 +74,8 @@ def verify(manifest: Manifest, dest: Path, deep: bool = False, fix: bool = False
                 report.bad_checksum.append(row["target_path"])
                 requeue(row, path)
                 continue
+            if verdict == "ok":
+                manifest.record_content_verified(row["id"])
             unverifiable = unverifiable or verdict is None
         elif deep and row["checksum"] and row["checksum_algo"] is not None:
             digest = file_hash(path, row["checksum_algo"])
