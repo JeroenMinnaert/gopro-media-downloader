@@ -58,12 +58,14 @@ version and date, commit, then push a matching tag:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-`.github/workflows/release.yml` runs the full lint + OS/Python matrix, then
-builds the sdist/wheel and publishes to PyPI via
+The tag is all it takes: `release.yml` checks the tag against `__version__`,
+runs the full matrix, builds, and publishes to PyPI via
 [trusted publishing](https://docs.pypi.org/trusted-publishers/) (OIDC, no
-stored token). One-time PyPI setup: add this repo as a trusted publisher for
-the `gopro-media-downloader` project, workflow `release.yml`, environment
-`pypi`.
+stored token), after which the Docker image is built from the same commit.
+
+**[docs/releasing.md](docs/releasing.md)** has the rest: the one-time PyPI and
+Docker Hub setup, the two gates that live outside the workflow files, and what
+each way a release can stop half way actually means.
 
 Actions are pinned to commit SHAs and the repository requires it, so a bump
 must keep the `@<sha> # vN` form or every job fails at "Set up job".
