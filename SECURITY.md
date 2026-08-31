@@ -37,7 +37,7 @@ browser-login profile. Things worth reporting:
 - The GoPro API itself, or anything that requires a GoPro account you do not
   control. Report those to GoPro.
 - Token expiry, rate limiting, or CAPTCHAs — those are normal operation, see
-  the README.
+  [docs/troubleshooting.md](docs/troubleshooting.md).
 - Findings that require an attacker who already has read access to your user
   account on the machine running the tool. A local token file is readable by
   its owner by design.
