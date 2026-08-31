@@ -119,7 +119,9 @@ Config precedence is flag → environment variable → config file → default;
 
 ## Contributing
 
-Setup, house rules and what to put in a bug report: [CONTRIBUTING.md](CONTRIBUTING.md).
+Setup, house rules and what to put in a bug report:
+[CONTRIBUTING.md](CONTRIBUTING.md). How the code fits together:
+[ARCHITECTURE.md](ARCHITECTURE.md). Release notes: [CHANGELOG.md](CHANGELOG.md).
 
 ```bash
 git clone https://github.com/JeroenMinnaert/gopro-media-downloader

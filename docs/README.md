@@ -11,5 +11,6 @@
 | [Running in Docker](docker.md) | The bundled `Dockerfile` and compose example, headless setup, scheduled runs |
 | [API notes](api-notes.md) | The GoPro API's sharp edges — every one of these caused a bug that looked like success |
 
+How the code is put together: [ARCHITECTURE.md](../ARCHITECTURE.md).
 Contributing and development setup: [CONTRIBUTING.md](../CONTRIBUTING.md).
 Reporting a vulnerability: [SECURITY.md](../SECURITY.md).
