@@ -131,7 +131,7 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 ```
 
 196 tests, fully mocked — no network, no token, no browser. CI runs across
-Python 3.11/3.12/3.13 on Linux and macOS.
+Python 3.11/3.12/3.13/3.14 on Linux and macOS.
 
 Found a way to leak the token or write outside `--dest`? Report it privately
 via [SECURITY.md](SECURITY.md), not an issue.

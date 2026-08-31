@@ -50,6 +50,8 @@ Notable changes to this project. The format follows
 ### Added
 
 - `gopro-dl --version`, which the bug-report template asks reporters for.
+- Python 3.14 to the CI matrix and the classifiers. The Docker image is
+  built on 3.14, so it was the one version nothing tested.
 - `verify --deep --only-unverified` skips re-hashing files an earlier deep
   pass already proved, for finishing an interrupted pass over a library where
   re-reading every byte takes hours. Sizes are still checked on everything, and
