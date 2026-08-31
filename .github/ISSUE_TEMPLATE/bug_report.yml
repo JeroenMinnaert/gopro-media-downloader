@@ -1,0 +1,95 @@
+name: Bug report
+description: Something went wrong during a run
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the README first — token expiry, CDN 403s mid-download, and
+        the manifest being redirected off a network `--dest` are all normal,
+        documented behaviour rather than bugs.
+
+        **Do not paste your token**, and remember log lines and `report` output
+        may contain signed URLs. Redact anything after `?` in a URL.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got instead.
+      placeholder: |
+        Ran `gopro-dl sync --dest /Volumes/nas/GoPro`. Expected it to resume the
+        1,100 remaining files; instead it re-downloaded ~40 already-complete ones.
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and output
+      description: >
+        The exact command (redact paths if you like) and the relevant output.
+        A run log lives in `<dest>/.gopro-dl/logs/` — or wherever `status`
+        reports the manifest is, if it was redirected off a network mount.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: state
+    attributes:
+      label: Manifest state
+      description: >
+        Output of `gopro-dl status`, and `gopro-dl report` filtered to an
+        affected file if the problem is about one specific item.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`pip show gopro-media-downloader | head -2`, or the commit SHA if running from source."
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How is it installed?
+      options:
+        - pipx / pip
+        - from source (editable)
+        - Docker
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: OS and Python version
+      placeholder: "macOS 15.3, Python 3.12"
+    validations:
+      required: true
+
+  - type: input
+    id: destination
+    attributes:
+      label: Destination filesystem
+      description: >
+        Local disk, or a network mount? If network, which kind (SMB, NFS, ...)
+        and mounted how. A surprising share of issues are SMB-specific.
+      placeholder: "SMB share on a UGREEN NAS, mounted at /Volumes/media"
+    validations:
+      required: true
+
+  - type: textarea
+    id: api-data
+    attributes:
+      label: Real values that exposed it (optional, very useful)
+      description: >
+        If this is a parsing, sizing, or checksum problem, the actual numbers
+        help enormously — file sizes, the ETag, the number of chapters, a
+        redacted `/media/{id}/download` response body. Most of the existing
+        regression tests are built from exactly this.
+      render: json
