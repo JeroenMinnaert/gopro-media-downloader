@@ -34,6 +34,11 @@ not one of `gopro-dl`'s own `GOPRO_*` variables — everything else is configure
 via compose environment variables or the `config.env` you copied in
 (`.env.example` lists every key).
 
+Images are published per release, never per commit: a `v0.1.1` tag produces
+`:0.1.1`, `:0.1` and `:latest`, so `:latest` is the newest *release* and pinning
+`:0.1.1` gets you exactly what the changelog describes — worth doing for a NAS
+that runs unattended.
+
 No public prebuilt image exists: `docker-publish.yml` pushes to whatever account
 the repo's own `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` secrets name, so a fork
 without them fails at the login step. Build locally as above, or set those two
