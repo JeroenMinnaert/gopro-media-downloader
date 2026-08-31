@@ -20,17 +20,17 @@ def _run_setup(tmp_path, *extra_args, token_file=None, dest=None, with_timezone=
     if with_dest:
         args += ["--dest", str(dest if dest is not None else tmp_path / "dl")]
     if with_timezone:
-        args += ["--timezone", "Europe/Brussels"]
+        args += ["--timezone", "Europe/Paris"]
     return main([*args, *extra_args])
 
 
-def _validate_ok(email="jane@example.com"):
+def _validate_ok(email="you@example.com"):
     respx.get(f"{API_HOST}/media/user").mock(return_value=httpx.Response(200, json={"email": email}))
 
 
 def _validate_only(good_token):
     respx.get(f"{API_HOST}/media/user").mock(
-        side_effect=lambda r: httpx.Response(200, json={"email": "jane@example.com"})
+        side_effect=lambda r: httpx.Response(200, json={"email": "you@example.com"})
         if good_token in r.headers.get("Authorization", "")
         else httpx.Response(401)
     )
@@ -196,7 +196,7 @@ def test_cancelling_the_overwrite_prompt_leaves_the_token_file_untouched(tmp_pat
 
 def test_detected_timezone_is_used_without_prompting(tmp_path, monkeypatch):
     monkeypatch.setattr(cli_module, "fetch_cached_browser_token", lambda *a, **k: "cached-token")
-    monkeypatch.setattr(cli_module, "_detect_timezone", lambda: "Europe/Brussels")
+    monkeypatch.setattr(cli_module, "_detect_timezone", lambda: "Europe/Paris")
 
     def fail_if_asked(*a, **k):
         raise AssertionError("should not prompt when detection succeeds")
@@ -207,7 +207,7 @@ def test_detected_timezone_is_used_without_prompting(tmp_path, monkeypatch):
         _validate_ok()
         code = _run_setup(tmp_path, with_timezone=False)
     assert code == 0
-    assert "GOPRO_TIMEZONE=Europe/Brussels" in _env_path(tmp_path).read_text()
+    assert "GOPRO_TIMEZONE=Europe/Paris" in _env_path(tmp_path).read_text()
 
 
 def test_falls_back_to_the_prompt_when_detection_fails(tmp_path, monkeypatch):
@@ -267,8 +267,8 @@ def test_rejects_an_unvalidatable_token_without_writing_anything(tmp_path, monke
 
 
 def test_detect_timezone_reads_the_macos_style_localtime_symlink(monkeypatch):
-    monkeypatch.setattr(os, "readlink", lambda p: "/var/db/timezone/zoneinfo/Europe/Brussels")
-    assert _detect_timezone() == "Europe/Brussels"
+    monkeypatch.setattr(os, "readlink", lambda p: "/var/db/timezone/zoneinfo/Europe/Paris")
+    assert _detect_timezone() == "Europe/Paris"
 
 
 def test_detect_timezone_reads_the_linux_style_localtime_symlink(monkeypatch):

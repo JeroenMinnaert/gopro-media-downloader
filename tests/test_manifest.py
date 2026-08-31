@@ -171,7 +171,7 @@ def test_free_space_survives_the_smbfs_32bit_truncation(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: Result())
 
     assert free_space(tmp_path) == TRUE_FREE_KIB * 1024
-    # 1.4 TiB of media now fits, where the wrapped value would have refused it
+    # a multi-terabyte library now fits, where the wrapped value would have refused it
     assert check_disk_space(tmp_path, 1432 * 1024**3).ok
 
 

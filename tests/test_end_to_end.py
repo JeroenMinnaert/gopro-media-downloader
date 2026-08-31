@@ -79,7 +79,7 @@ def test_full_sync_lays_out_flat_date_folders(tmp_path):
     dest = tmp_path / "media"
     assert run(dest) == 0
 
-    # aaa111 was captured 22:30 UTC in Brussels -> next local day
+    # aaa111 was captured 22:30 UTC in Paris -> next local day
     assert (dest / "2023-07-15" / "GX010001.MP4").read_bytes() == VIDEO
     assert (dest / "2024-01-02" / "GOPR0002.JPG").read_bytes() == PHOTO
     # ddd444 shares a filename with aaa111 on the same date -> id-suffixed

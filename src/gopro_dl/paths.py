@@ -36,7 +36,7 @@ def parse_captured_at(value: str) -> datetime:
 
 
 def parse_timezone(text: str) -> timezone | ZoneInfo:
-    """Parse an IANA name ("Europe/Brussels") or a UTC offset ("+02:00")."""
+    """Parse an IANA name ("Europe/Paris") or a UTC offset ("+02:00")."""
     text = text.strip()
     match = _OFFSET_RE.match(text)
     if match:

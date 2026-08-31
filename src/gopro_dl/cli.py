@@ -57,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument(
             "--timezone",
             help="timezone for folder dates when GoPro supplies none "
-            "(IANA name like Europe/Brussels, or an offset like +02:00). "
+            "(IANA name like Europe/Paris, or an offset like +02:00). "
             "A timezone from the API always wins.",
         )
         p.add_argument("--quiet", action="store_true")
@@ -244,7 +244,7 @@ def _prompt_for_token() -> str | None:
 
 
 def _detect_timezone() -> str | None:
-    """Best-effort: the system's IANA timezone, e.g. "Europe/Brussels".
+    """Best-effort: the system's IANA timezone, e.g. "Europe/Paris".
 
     Reads the /etc/localtime symlink -- how macOS and most Linux distros
     represent the configured system timezone. Never raises: returns None if
@@ -339,7 +339,7 @@ def cmd_setup(config: Config, args) -> int:
             tz_name = detected
         else:
             tz_name = _ask(
-                "Home timezone for folder dates, e.g. Europe/Brussels (optional, Enter to skip): "
+                "Home timezone for folder dates, e.g. Europe/Paris (optional, Enter to skip): "
             )
     if tz_name:
         try:

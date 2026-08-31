@@ -11,8 +11,8 @@ the same API the website uses, picks the `source` variation (the original file
 off the camera), verifies every file against the origin's own checksum, and
 keeps a manifest so an interrupted run picks up exactly where it stopped.
 
-Proven on a real library: 1,217 items / 1.4 TiB, including 22 chaptered
-recordings and a 4-chapter 13.6 GiB clip.
+Exercised end to end against a multi-terabyte library of over a thousand
+items, including chaptered recordings and a 13.6 GiB 4-chapter clip.
 
 > **Not affiliated with, endorsed by, or supported by GoPro, Inc.** "GoPro" and
 > "GoPro Plus" are trademarks of their respective owner and are used here only
@@ -70,13 +70,13 @@ Checking for a saved GoPro browser session...
 Downloading the browser used for GoPro login (one-time, ~250MB)...
 A browser window has opened. Log into GoPro there -- this continues
 automatically once you're signed in, or Ctrl-C to give up.
-Token OK - jane@example.com (via browser login)
+Token OK - you@example.com (via browser login)
 
-Wrote /Users/jane/Library/Application Support/gopro-dl/token (chmod 600)
-Destination for media (Enter to accept /Users/jane/Downloads/GoPro): 
-Destination: /Users/jane/Downloads/GoPro
-Detected timezone: Europe/Brussels (override with --timezone if wrong)
-Wrote /Users/jane/Library/Application Support/gopro-dl/config.env
+Wrote /Users/you/Library/Application Support/gopro-dl/token (chmod 600)
+Destination for media (Enter to accept /Users/you/Downloads/GoPro): 
+Destination: /Users/you/Downloads/GoPro
+Detected timezone: Europe/Paris (override with --timezone if wrong)
+Wrote /Users/you/Library/Application Support/gopro-dl/config.env
 
 Next: gopro-dl sync --dry-run --limit 5
 ```
@@ -184,7 +184,7 @@ re-running resumes from the exact byte. It can take up to a minute to take
 effect, because a worker may be blocked on a socket read — press it again to
 stop immediately (still safe: partial files and the manifest survive).
 
-Useful flags: `--timezone Europe/Brussels`, `--since 2022-01-01`,
+Useful flags: `--timezone Europe/Paris`, `--since 2022-01-01`,
 `--until 2022-12-31`, `--types Video,Photo`,
 `--concurrency 3` (max 8), `--limit N`, `--retry-failed`, `--quiet`,
 `--non-interactive`, `--no-manifest-refresh`.
@@ -313,7 +313,7 @@ gopro-dl verify --deep         # re-read from disk and check against the origin
 
 `backfill-etags` costs one API call per item plus one HEAD per file and
 transfers no media, so it is cheap to run. `verify --deep` re-reads everything,
-which is bounded by your link (roughly 4 hours for 1.4 TiB over gigabit) — run
+which is bounded by your link (roughly 3 hours per TiB over gigabit) — run
 it once at the end, not during a download, or the two compete for bandwidth.
 
 ## Capture dates inside the files
@@ -409,12 +409,12 @@ destination path, so re-running against the same NAS folder finds it again.
 You'll see a one-line notice when this kicks in:
 
 ```bash
-gopro-dl sync --dest /Volumes/GoPro --token-file ~/gopro-backup/token --timezone Europe/Brussels
+gopro-dl sync --dest /Volumes/GoPro --token-file ~/gopro-backup/token --timezone Europe/Paris
 ```
 
 ```
 /Volumes/GoPro looks like a network mount -- keeping the manifest and logs
-locally at /Users/jane/Library/Application Support/gopro-dl/manifests/GoPro-3f9a1c2b
+locally at /Users/you/Library/Application Support/gopro-dl/manifests/GoPro-3f9a1c2b
 instead (SMB/NFS can corrupt SQLite's WAL journal). Override with --manifest-dir.
 ```
 
@@ -429,7 +429,7 @@ gopro-dl sync \
   --dest /Volumes/GoPro \
   --manifest-dir ~/gopro-backup/.gopro-dl \
   --token-file ~/gopro-backup/token \
-  --timezone Europe/Brussels
+  --timezone Europe/Paris
 ```
 
 SMB silently refuses SQLite's WAL journal (it degrades to `journal_mode=delete`)
@@ -471,8 +471,8 @@ is fetched twice.
 ## Running in Docker
 
 A `Dockerfile` and `docker-compose.example.yml` are included, aimed at
-running `gopro-dl` on a NAS (this was written with a UGREEN NAS's Docker
-support in mind, but any Docker host works the same way).
+running `gopro-dl` on a NAS with Docker support, though any Docker host works
+the same way.
 
 ```bash
 cp docker-compose.example.yml docker-compose.yml
@@ -513,7 +513,7 @@ those two secrets on your fork to push to your own registry.
 
 ## API notes (things that will bite you)
 
-Established by inspecting a real account. Each of these caused a bug that
+Established by inspecting live API responses. Each of these caused a bug that
 looked like success:
 
 1. **`_embedded.files` is a trap.** For videos it points at
@@ -531,8 +531,8 @@ looked like success:
    it matched the summed chapter sizes byte-for-byte on every chaptered item
    tested. The individual variations carry no size at all.
 
-4. **`captured_at_timezone` is essentially always absent** (1,216 of 1,217
-   items). Without `--timezone`, folder dates fall back to UTC and evening
+4. **`captured_at_timezone` is essentially always absent** — all but one item
+   in a library of over a thousand carried no value at all. Without `--timezone`, folder dates fall back to UTC and evening
    clips land in the previous day. DST is applied per clip.
 
 5. **No checksums anywhere in the API** — not in the listing, the download

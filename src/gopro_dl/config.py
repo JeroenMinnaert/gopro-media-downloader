@@ -90,7 +90,7 @@ def load_config(args, app_dirs: AppDirs) -> Config:
         except Exception as exc:
             raise ValueError(
                 f"invalid --timezone {tz_name!r}: {exc}. "
-                "Use an IANA name like Europe/Brussels, or an offset like +02:00."
+                "Use an IANA name like Europe/Paris, or an offset like +02:00."
             ) from exc
 
     return Config(

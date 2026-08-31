@@ -33,7 +33,7 @@ def test_detects_smbfs_on_macos(monkeypatch, tmp_path):
     monkeypatch.setattr(preflight.sys, "platform", "darwin")
     monkeypatch.setattr(
         subprocess, "run",
-        _fake_run(f"//nas/GoPro on {tmp_path} (smbfs, nodev, nosuid, mounted by jane)\n"),
+        _fake_run(f"//nas/GoPro on {tmp_path} (smbfs, nodev, nosuid, mounted by you)\n"),
     )
     assert is_network_filesystem(tmp_path) is True
 
