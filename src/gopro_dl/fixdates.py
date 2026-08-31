@@ -150,7 +150,9 @@ class _Candidate:
     shifted: bool = False
 
 
-def _preserve_spacing(candidates: list[_Candidate], report: FixReport) -> None:
+def _preserve_spacing(
+    candidates: list[_Candidate], report: FixReport, tolerance: int
+) -> None:
     """Correct a stopped camera clock by sliding a whole folder, not flattening it.
 
     A GoPro that loses power resets its clock, so a day's clips come back dated
@@ -164,6 +166,12 @@ def _preserve_spacing(candidates: list[_Candidate], report: FixReport) -> None:
     right and the gaps between clips survive. Groups whose embedded times are
     already identical carry no ordering to protect and are left to the plain
     overwrite.
+
+    That one reported timestamp is the signature of the stopped clock, so it is
+    required: clips whose true capture times genuinely differ get their own
+    timestamps written instead. Sliding those as a batch would anchor on the
+    earliest and leave every later clip still wrong -- and a second `fix-dates`
+    run would move them again.
     """
     groups: dict[str, list[_Candidate]] = {}
     for c in candidates:
@@ -174,6 +182,9 @@ def _preserve_spacing(candidates: list[_Candidate], report: FixReport) -> None:
         embedded = [c.dates.primary for c in group]
         if len(group) < 2 or len(set(embedded)) < 2:
             continue
+        reported = [c.utc for c in group]
+        if (max(reported) - min(reported)).total_seconds() > tolerance:
+            continue  # distinct real capture times, not one collapsed batch
         # The ISO-BMFF fields we rewrite are UTC, so anchor in that domain.
         offset = min(c.utc.replace(tzinfo=None) for c in group) - min(embedded)
         for c in group:
@@ -251,7 +262,7 @@ def fix_dates(
         candidates.append(_Candidate(row, rel, path, dates, local, utc, row["date_folder"]))
 
     if preserve_spacing:
-        _preserve_spacing(candidates, report)
+        _preserve_spacing(candidates, report, tolerance)
 
     # Pass two: write.
     for c in candidates:

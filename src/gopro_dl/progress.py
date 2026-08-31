@@ -85,7 +85,8 @@ class DownloadProgress:
         if handle is None:
             return
         with self._lock:
-            self.files_done += 1
+            if ok:
+                self.files_done += 1  # "N/M files" counts what actually landed
             self.progress.remove_task(handle)
             self._update_overall_label()
 

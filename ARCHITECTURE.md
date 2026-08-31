@@ -52,8 +52,11 @@ accident. For getting the tool running, see the
 
 Workers claim items via `manifest.claim_item()`/`claim_file()` (SQLite as the
 lock) so two workers never race on the same file. On auth expiry, a worker
-puts its item back on the queue *before* tripping the gate and parking —
-this ordering is load-bearing for not losing work.
+puts its item back on the queue *before* tripping the gate and parking --
+this ordering is load-bearing for not losing work. Both claims are released,
+item *and* file: a file row left `downloading` refuses the claim when the
+requeued item comes round again after the gate lifts, and is skipped in
+silence for the rest of the run.
 
 ## Cross-cutting invariants worth knowing before editing
 

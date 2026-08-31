@@ -9,7 +9,7 @@ from rich.console import Console
 
 import gopro_dl.auth as auth_module
 import gopro_dl.cli as cli_module
-from gopro_dl.api import API_HOST
+from gopro_dl.api import API_HOST, AuthExpired
 from gopro_dl.auth import AuthGate, TokenProvider, refresh_token_interactively
 from gopro_dl.cli import main
 
@@ -255,3 +255,70 @@ def test_cdn_403_does_not_trigger_the_token_prompt(tmp_path, monkeypatch):
     assert prompts["count"] == 0, "a CDN 403 must not be mistaken for token expiry"
     assert code == 0
     assert (dest / "2023-07-15" / "GX010001.MP4").read_bytes() == VIDEO
+
+
+@respx.mock
+def test_a_token_that_dies_mid_file_does_not_cost_that_file(tmp_path, monkeypatch):
+    """The item's claim is released on an auth pause; the *file's* claim has to
+    go with it. Left 'downloading', the row refuses the claim when the requeued
+    item comes round again and the file is silently skipped for the whole run --
+    with the sync still exiting 0."""
+    from gopro_dl.downloader import Downloader
+    from gopro_dl.manifest import Manifest
+
+    token_file = tmp_path / "tok"
+    token_file.write_text(EXPIRED)
+
+    def on_prompt():
+        token_file.write_text(GOOD)
+        return ""
+
+    monkeypatch.setattr(cli_module, "console", FakeConsole(on_prompt))
+
+    respx.get(f"{API_HOST}/media/user").mock(
+        side_effect=lambda r: httpx.Response(200, json={"id": "u1"})
+        if token_of(r) == GOOD
+        else httpx.Response(401)
+    )
+    respx.get(f"{API_HOST}/media/search").mock(
+        side_effect=[
+            httpx.Response(200, json=load_fixture("search_page1")),
+            httpx.Response(200, json=load_fixture("search_page2")),
+        ]
+    )
+    for media_id, size in (("aaa111", len(VIDEO)), ("bbb222", len(PHOTO)), ("ddd444", 2100)):
+        respx.get(f"{API_HOST}/media/{media_id}/download").mock(
+            httpx.Response(200, json={"_embedded": {"variations": [
+                {"label": "source", "url": f"https://cdn.test/{media_id}",
+                 "file_size": size, "type": "mp4"}]}})
+        )
+    respx.get("https://cdn.test/aaa111").mock(httpx.Response(200, content=VIDEO))
+    respx.get("https://cdn.test/bbb222").mock(httpx.Response(200, content=PHOTO))
+    respx.get("https://cdn.test/ddd444").mock(httpx.Response(200, content=b"D" * 2100))
+
+    # The token dies once the transfer is already under way -- past resolve(),
+    # past claim_file() -- which is what a signed-URL refresh on a long file
+    # runs into.
+    real_fetch = Downloader.fetch_file
+    expired_once = {"done": False}
+
+    def fetch_file(self, item, source, file_row, folder):
+        if not expired_once["done"]:
+            expired_once["done"] = True
+            raise AuthExpired("401 mid-transfer")
+        return real_fetch(self, item, source, file_row, folder)
+
+    monkeypatch.setattr(Downloader, "fetch_file", fetch_file)
+
+    dest = tmp_path / "media"
+    code = main([
+        "sync", "--dest", str(dest), "--token-file", str(token_file),
+        "--concurrency", "1", "--skip-preflight",
+    ])
+
+    assert code == 0
+    with Manifest(dest / ".gopro-dl" / "manifest.db") as m:
+        states = [row["state"] for row in m.all_files()]
+        assert states == ["done"] * 3, "the interrupted file was never re-fetched"
+        # and the interruption did not eat one of the file's four attempts
+        assert max(row["attempts"] for row in m.all_files()) == 1

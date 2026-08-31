@@ -79,7 +79,7 @@ nohup gopro-dl sync --non-interactive --quiet > ~/gopro-sync.log 2>&1 &
 ```
 
 Common flags: `--since` / `--until`, `--types Video,Photo`, `--timezone`,
-`--concurrency N` (max 8), `--limit N`, `--quiet`, `--non-interactive`,
+`--concurrency N` (max 8), `--limit N`, `--quiet`, `--verbose`, `--non-interactive`,
 `--retry-failed`, `--no-manifest-refresh`, `--manifest-dir`.
 Config precedence is flag → environment variable → config file → default;
 `.env.example` lists every key. Full reference: `gopro-dl --help`.

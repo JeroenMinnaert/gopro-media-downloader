@@ -75,9 +75,6 @@ CREATE INDEX IF NOT EXISTS idx_items_state ON media_items(state);
 CREATE INDEX IF NOT EXISTS idx_items_date ON media_items(date_folder);
 """
 
-ACTIVE_ITEM_STATES = ("pending", "resolved", "failed")
-DONE_FILE_STATES = ("done", "skipped")
-
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -590,10 +587,15 @@ class Manifest:
             self.conn.commit()
 
     def reset_file(self, file_id: int) -> None:
-        """Force a file back into the queue regardless of its current state."""
+        """Force a file back into the queue regardless of its current state.
+
+        The attempt count goes with it, as in `reset_failed`: a file that once
+        exhausted its budget would otherwise be skipped in silence by the very
+        sync that `verify --fix` just told the user to run.
+        """
         with self._lock:
             self.conn.execute(
-                "UPDATE media_files SET state='pending', last_error=NULL, "
+                "UPDATE media_files SET state='pending', attempts=0, last_error=NULL, "
                 "actual_size=NULL, completed_at=NULL WHERE id=?",
                 (file_id,),
             )
@@ -764,10 +766,3 @@ class Manifest:
                 ).fetchall()
             )
 
-    def date_folders(self) -> int:
-        with self._lock:
-            return int(
-                self.conn.execute(
-                    "SELECT COUNT(DISTINCT date_folder) AS n FROM media_items WHERE state='done'"
-                ).fetchone()["n"]
-            )

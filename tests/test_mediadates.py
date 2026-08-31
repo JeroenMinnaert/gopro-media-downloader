@@ -112,10 +112,20 @@ def _fullbox_time(when: datetime, version: int = 0) -> bytes:
     return head + struct.pack(">II", seconds, seconds) + b"\x00" * 12
 
 
-def make_mp4(when: datetime, version: int = 0) -> bytes:
+def _day_atom(text: str, sized: bool = True) -> bytes:
+    """A udta ©day atom. `sized` is the standard QuickTime metadata shape:
+    uint16 text length + uint16 language code, then the text."""
+    raw = text.encode("ascii")
+    if sized:
+        raw = struct.pack(">HH", len(raw), 0x55C4) + raw
+    return _box(b"\xa9day", raw)
+
+
+def make_mp4(when: datetime, version: int = 0, day: bytes = b"") -> bytes:
     mdia = _box(b"mdia", _box(b"mdhd", _fullbox_time(when, version)))
     trak = _box(b"trak", _box(b"tkhd", _fullbox_time(when, version)) + mdia)
-    moov = _box(b"moov", _box(b"mvhd", _fullbox_time(when, version)) + trak)
+    udta = _box(b"udta", day) if day else b""
+    moov = _box(b"moov", _box(b"mvhd", _fullbox_time(when, version)) + trak + udta)
     return _box(b"ftyp", b"isom" + b"\x00" * 8) + moov + _box(b"mdat", b"\x00" * 32)
 
 
@@ -280,3 +290,25 @@ def test_a_video_with_no_moov_is_reported_not_guessed(tmp_path):
     path.write_bytes(_box(b"ftyp", b"isom" + b"\x00" * 8) + _box(b"mdat", b"\x00" * 16))
     with pytest.raises(MalformedMedia):
         read_dates(path)
+
+
+@pytest.mark.parametrize("sized", [True, False])
+def test_a_day_atom_is_read_in_either_shape(tmp_path, sized):
+    """Real files write ©day the QuickTime way -- a uint16 length and language
+    code ahead of the text. Reading only the bare-text form leaves the field
+    silently unrepaired in most of the library."""
+    stale = datetime(2019, 5, 4, 1, 2, 3)
+    path = tmp_path / "GX010001.MP4"
+    path.write_bytes(
+        make_mp4(stale, day=_day_atom(stale.strftime("%Y-%m-%dT%H:%M:%SZ"), sized=sized))
+    )
+
+    dates = read_dates(path)
+    assert [f.current for f in dates.fields if f.name == "day"] == [stale]
+
+    before = path.stat().st_size
+    apply_dates(path, LOCAL, UTC_AT, dates)
+    assert path.stat().st_size == before  # patched in place, never rebuilt
+    assert [f.current for f in read_dates(path).fields if f.name == "day"] == [
+        UTC_AT.replace(tzinfo=None)
+    ]

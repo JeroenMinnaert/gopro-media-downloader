@@ -62,10 +62,11 @@ def verify(manifest: Manifest, dest: Path, deep: bool = False, fix: bool = False
             requeue(row, path)
             continue
 
-        if not expected:
-            report.unverifiable.append(row["target_path"])
+        # "unverifiable" and "ok" are exclusive: a file nothing could be
+        # checked against has not passed, it simply has no verdict.
+        unverifiable = not expected
 
-        if deep and row["checksum"] and row["checksum_algo"] == "s3-etag":
+        if deep and row["checksum"] and row["checksum_algo"] in ("s3-etag", "etag"):
             # Re-hash against the origin's ETag. Inconclusive (None) means the
             # upload used a part size we cannot pin down -- not corruption.
             verdict = etag_for_file(path, row["checksum"])
@@ -73,14 +74,18 @@ def verify(manifest: Manifest, dest: Path, deep: bool = False, fix: bool = False
                 report.bad_checksum.append(row["target_path"])
                 requeue(row, path)
                 continue
-            if verdict is None:
-                report.unverifiable.append(row["target_path"])
-        elif deep and row["checksum"] and row["checksum_algo"] not in (None, "etag", "s3-etag"):
+            unverifiable = unverifiable or verdict is None
+        elif deep and row["checksum"] and row["checksum_algo"] is not None:
             digest = file_hash(path, row["checksum_algo"])
-            if digest and digest.lower() != str(row["checksum"]).lower():
+            if digest is None:
+                unverifiable = True  # an algorithm this Python cannot hash
+            elif digest.lower() != str(row["checksum"]).lower():
                 report.bad_checksum.append(row["target_path"])
                 requeue(row, path)
                 continue
 
-        report.ok += 1
+        if unverifiable:
+            report.unverifiable.append(row["target_path"])
+        else:
+            report.ok += 1
     return report

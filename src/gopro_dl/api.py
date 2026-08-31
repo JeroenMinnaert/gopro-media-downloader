@@ -46,7 +46,12 @@ def parse_retry_after(value: str | None) -> float | None:
     value = value.strip()
     if value.isdigit():
         return float(value)
-    parsed = email.utils.parsedate_to_datetime(value)
+    try:
+        parsed = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        # Anything unparseable just means "no hint" -- a malformed header from
+        # a proxy must not take down the retry path it appears on.
+        return None
     if parsed is None:
         return None
     import datetime as _dt
@@ -147,6 +152,9 @@ class GoProClient:
         so waiting on the gate would deadlock the run.
         """
         last_error: Exception | None = None
+        # Popped once, outside the loop: popping per attempt would strip the
+        # caller's headers and every retry after the first would go without.
+        caller_headers = kwargs.pop("headers", {})
 
         for attempt in range(self.max_attempts):
             if self.shutdown.is_set():
@@ -157,7 +165,7 @@ class GoProClient:
                 raise ApiError("shutting down")
 
             auth = self._auth_kwargs()
-            headers = {"Accept": accept, **auth.pop("headers", {}), **kwargs.pop("headers", {})}
+            headers = {"Accept": accept, **auth.pop("headers", {}), **caller_headers}
 
             try:
                 response = self.client.request(method, url, headers=headers, **auth, **kwargs)
@@ -175,19 +183,26 @@ class GoProClient:
 
             if status in AUTH_STATUS:
                 # Try the cookie transport once before concluding the token is dead.
+                retry = None
                 if self._auth_mode == "bearer":
                     alt = self._auth_kwargs("cookie")
-                    alt_headers = {"Accept": accept, **alt.pop("headers", {})}
+                    alt_headers = {"Accept": accept, **alt.pop("headers", {}), **caller_headers}
                     try:
                         retry = self.client.request(method, url, headers=alt_headers, **alt, **kwargs)
                     except httpx.HTTPError:
                         retry = None
-                    if retry is not None and retry.status_code not in AUTH_STATUS:
-                        self._remember_mode("cookie")
-                        self.breaker.record(True)
-                        return retry
-                self.breaker.record(True)  # the service answered; it is not an outage
-                raise AuthExpired(f"{status} from {url}")
+                if retry is not None and retry.status_code < 400:
+                    self._remember_mode("cookie")
+                    self.breaker.record(True)
+                    return retry
+                if retry is None or retry.status_code in AUTH_STATUS:
+                    self.breaker.record(True)  # the service answered; it is not an outage
+                    raise AuthExpired(f"{status} from {url}")
+                # The cookie transport got past the auth wall onto some other
+                # error: the token is not the problem, but an error body is not
+                # a result either. Judge it like any other response rather than
+                # handing a 500 back as though it were the download JSON.
+                response, status = retry, retry.status_code
 
             if status in RETRY_STATUS:
                 last_error = ApiError(f"HTTP {status} from {url}", status=status, systemic=True)
@@ -222,7 +237,14 @@ class GoProClient:
         try:
             # bypass_gate: this call is how a paused run gets unpaused
             response = self.request("GET", f"{API_HOST}/media/user", bypass_gate=True)
-        except (AuthExpired, ApiError):
+        except AuthExpired:
+            return None
+        except ApiError as exc:
+            if exc.systemic:
+                # api.gopro.com was never actually reached. That says nothing
+                # about the token, and reporting it as a rejection would send
+                # the user off fetching a fresh one for nothing.
+                raise
             return None
         try:
             data = response.json()

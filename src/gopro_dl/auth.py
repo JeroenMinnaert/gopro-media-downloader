@@ -35,6 +35,24 @@ def token_instructions(destination: str) -> str:
     )
 
 
+def normalize_token(text: str | None) -> str | None:
+    """Tolerate a pasted "Authorization: Bearer eyJ..." line.
+
+    Shared by every entry point -- the token file, the setup prompt, the
+    mid-run refresh -- because a header pasted at any of them looks the same,
+    and "rejected" is a poor answer to a token that is really fine.
+    """
+    if not text:
+        return None
+    text = text.strip()
+    for prefix in ("Authorization:", "authorization:"):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+    if text.lower().startswith("bearer "):
+        text = text[7:].strip()
+    return text or None
+
+
 class TokenProvider:
     """Supplies the bearer token, and can re-read it while the run is live."""
 
@@ -57,13 +75,7 @@ class TokenProvider:
             text = self._token_file.read_text(encoding="utf-8").strip()
         except OSError:
             return None
-        # Tolerate a pasted "Authorization: Bearer eyJ..." line.
-        for prefix in ("Authorization:", "authorization:"):
-            if text.startswith(prefix):
-                text = text[len(prefix):].strip()
-        if text.lower().startswith("bearer "):
-            text = text[7:].strip()
-        return text or None
+        return normalize_token(text)
 
     @property
     def token(self) -> str:
@@ -99,16 +111,10 @@ class AuthGate:
         self._ok = threading.Event()
         self._ok.set()
         self._lock = threading.Lock()
-        self._generation = 0
 
     @property
     def is_paused(self) -> bool:
         return not self._ok.is_set()
-
-    @property
-    def generation(self) -> int:
-        with self._lock:
-            return self._generation
 
     def wait(self, shutdown: threading.Event | None = None) -> bool:
         """Block while paused. False means the run is shutting down."""
@@ -123,7 +129,6 @@ class AuthGate:
             if not self._ok.is_set():
                 return False
             self._ok.clear()
-            self._generation += 1
             log_event(logging.WARNING, "auth_paused", reason=reason)
             return True
 
@@ -195,7 +200,7 @@ def refresh_token_interactively(
             if fresh:
                 provider.set(fresh)
         elif answer:
-            provider.set(answer)
+            provider.set(normalize_token(answer) or answer)
         else:
             provider.reload()
 

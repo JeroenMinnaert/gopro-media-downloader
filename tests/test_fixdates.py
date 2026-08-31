@@ -311,3 +311,25 @@ def test_an_origin_checksum_that_is_not_an_etag_is_still_preserved(manifest, tmp
     fix_dates(manifest, tmp_path)
 
     assert manifest.get_file("aaa111", 1)["origin_checksum"] == "d41d8cd98f00b204e9800998ecf8427e"
+
+
+def test_clips_with_their_own_distinct_api_times_are_not_slid_as_one_batch(manifest, tmp_path):
+    """The slide exists for a stopped clock, whose signature is GoPro reporting
+    *one* timestamp for the whole batch. Two clips with genuinely different
+    capture times and unrelated skews are not that: anchoring the group on the
+    earliest would leave the later one still wrong, and re-running would move
+    it again."""
+    first = _seed_clip(
+        manifest, tmp_path, "GX010001.MP4", datetime(2023, 7, 15, 10, 0),
+        "one", captured_at="2023-07-15T10:05:00Z",
+    )
+    second = _seed_clip(
+        manifest, tmp_path, "GX010002.MP4", datetime(2023, 7, 15, 11, 0),
+        "two", captured_at="2023-07-15T11:07:00Z",
+    )
+
+    report = fix_dates(manifest, tmp_path)
+
+    assert report.shifted == 0
+    assert read_dates(first).primary == datetime(2023, 7, 15, 10, 5)
+    assert read_dates(second).primary == datetime(2023, 7, 15, 11, 7)

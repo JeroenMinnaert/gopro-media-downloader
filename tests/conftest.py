@@ -78,7 +78,9 @@ def client(tmp_path):
     c = GoProClient(
         tokens=tokens,
         gate=AuthGate(),
-        breaker=CircuitBreaker(),
+        # A tripped breaker parks for a minute in real life; no test wants
+        # to sit through that to check what the client does with it.
+        breaker=CircuitBreaker(base_cooldown=0.01),
         shutdown=threading.Event(),
         max_attempts=3,
         sleep=lambda _: None,  # no real backoff waits in tests

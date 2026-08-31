@@ -100,7 +100,24 @@ def test_target_paths_are_unique_and_immutable(manifest):
     manifest.upsert_file("aaa111", 1, "GX010001.MP4", "2023-07-15/SOMEWHERE_ELSE.MP4", 2000)
     row = manifest.get_file("aaa111", 1)
     assert row["target_path"] == "2023-07-15/GX010001.MP4"
-    assert row["expected_size"] == 1000 or row["expected_size"] == 2000
+    # ...but the size does refresh: only a date repair freezes it (see
+    # test_a_later_sync_does_not_undo_the_repair in test_fixdates.py).
+    assert row["expected_size"] == 2000
+
+
+def test_a_claim_excludes_every_later_claimant(manifest):
+    add(manifest, "aaa111")
+    file_id = manifest.upsert_file("aaa111", 1, "a.MP4", "2023-07-15/a.MP4", 1000)
+
+    assert manifest.claim_item("aaa111")
+    assert not manifest.claim_item("aaa111")  # a second worker must lose
+    assert manifest.claim_file(file_id)
+    assert not manifest.claim_file(file_id)
+
+    # ...until the row is released back to the pool
+    manifest.reset_stale()
+    assert manifest.claim_item("aaa111")
+    assert manifest.claim_file(file_id)
 
 
 def test_remaining_bytes_mixes_resolved_and_unresolved(manifest):

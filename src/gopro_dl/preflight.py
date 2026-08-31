@@ -45,7 +45,7 @@ def check_destination(dest: Path, create: bool = True) -> None:
         raise PreflightError(f"destination {dest} exists but is not a directory")
     if not dest.exists():
         if not create:
-            raise PreflightError(f"destination {dest} does not exist (pass --create-dest)")
+            raise PreflightError(f"destination {dest} does not exist")
         dest.mkdir(parents=True, exist_ok=True)
     probe = dest / ".gopro-dl-write-test"
     try:
@@ -75,11 +75,14 @@ def _df_free_bytes(path: Path) -> int | None:
     out = _run_lines(["df", "-Pk", str(path)])
     if not out or len(out) < 2:
         return None
-    # POSIX format: Filesystem 1024-blocks Used Available Capacity Mounted-on
-    fields = out[-1].split()
-    if len(fields) < 4 or not fields[3].isdigit():
+    # POSIX format: Filesystem 1024-blocks Used Available Capacity Mounted-on.
+    # Anchored on the "NN%" capacity column rather than split by whitespace: an
+    # SMB share -- the very case this function exists for -- is named something
+    # like "//user@nas/Media Volume", and its spaces would shift the columns.
+    match = re.search(r"\s(\d+)\s+(\d+)\s+(\d+)\s+\d+%", out[-1])
+    if not match:
         return None
-    return int(fields[3]) * 1024
+    return int(match.group(3)) * 1024
 
 
 def free_space(dest: Path) -> int:
