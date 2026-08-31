@@ -77,7 +77,15 @@ job calls `ci.yml` as a reusable workflow (`workflow_call`) so a tag gets
 the exact same lint + full OS/Python matrix as a normal push to `main` —
 tags aren't otherwise covered by `ci.yml`'s own triggers. `build` `needs:
 test` and `publish` `needs: build`, so nothing reaches PyPI unless that
-whole suite passes first.
+whole suite passes first, and a `version` job everything else waits on fails
+the run in seconds when the tag and `__version__` disagree.
+
+Two further gates sit outside the YAML, and both have to be right or a release
+stops at the publish step: the PyPI trusted publisher is constrained to the
+`pypi` environment, and that GitHub environment only accepts refs matching the
+`v*` **tag** policy (no branch policy at all). Together they mean a version tag
+is the only thing that can publish — which is why `release.yml` no longer
+offers `workflow_dispatch`: it could only ever have been turned away.
 
 ## Architecture
 

@@ -1,9 +1,11 @@
 name: Release
 
+# Tags only. A dispatch from a branch could otherwise run the whole matrix and
+# the build before being turned away at the publish step, which the `pypi`
+# environment now restricts to `v*` tags anyway.
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,7 +20,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: The tag must match __version__
-        if: github.ref_type == 'tag'
         run: |
           tag="${GITHUB_REF_NAME#v}"
           code="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/gopro_dl/__init__.py)"

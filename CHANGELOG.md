@@ -6,6 +6,14 @@ Notable changes to this project. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- A version tag is now the only thing that can publish to PyPI. The trusted
+  publisher is constrained to the `pypi` environment, that environment accepts
+  only `v*` tags, and `release.yml` no longer offers `workflow_dispatch` --
+  previously a manual run from any branch could publish whatever version the
+  code happened to declare.
+
 ### Changed
 
 - Docker images are cut from releases instead of from every commit on `main`.
