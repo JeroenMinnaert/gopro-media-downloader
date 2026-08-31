@@ -6,7 +6,16 @@ Notable changes to this project. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- `sync` created the destination's log directory before discovering there was
+  no token, so someone trying the tool out before configuring it was left with
+  a tree under a destination they never got to use. The token is now checked
+  alongside the manifest, before any state is created. Same for
+  `backfill-etags` and `token`.
+- A cancelled browser login left an empty `browser-profile/` directory behind.
+  It is removed when a login comes back empty-handed -- and only while it is
+  empty, so a real saved session is never touched.
 
 ## [0.1.0] — 2026-08-31
 

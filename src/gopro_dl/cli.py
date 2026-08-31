@@ -69,11 +69,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"gopro-dl {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def common(p: argparse.ArgumentParser, needs_manifest: bool = True) -> None:
+    def common(
+        p: argparse.ArgumentParser, needs_manifest: bool = True, needs_token: bool = False
+    ) -> None:
         # needs_manifest steers the network-mount-detection check in main():
         # only commands that actually open the manifest (the default) should
         # pay for it. `token`/`setup` opt out explicitly below.
-        p.set_defaults(needs_manifest=needs_manifest)
+        # needs_token marks the commands that cannot do anything without one,
+        # so main() can say so before creating any state.
+        p.set_defaults(needs_manifest=needs_manifest, needs_token=needs_token)
         p.add_argument("--dest", help="destination directory (default ~/Downloads/GoPro)")
         p.add_argument("--manifest-dir", help="where to keep manifest.db and logs")
         p.add_argument("--token", help="bearer token (prefer --token-file for long runs)")
@@ -91,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
         )
 
     sync = sub.add_parser("sync", help="enumerate the library and download what is missing")
-    common(sync)
+    common(sync, needs_token=True)
     sync.add_argument("--concurrency", type=int, help="parallel downloads (default 3, max 8)")
     sync.add_argument(
         "--limit", type=_positive_int, help="only process N media items (for smoke tests)"
@@ -143,7 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
         "backfill-etags",
         help="fetch origin checksums for files downloaded before content verification",
     )
-    common(backfill)
+    common(backfill, needs_token=True)
     backfill.add_argument("--limit", type=_positive_int, help="only process N files")
 
     fix = sub.add_parser(
@@ -180,7 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     token = sub.add_parser("token", help="validate the current token")
-    common(token, needs_manifest=False)
+    common(token, needs_manifest=False, needs_token=True)
 
     setup = sub.add_parser(
         "setup",
@@ -811,6 +815,17 @@ def main(argv: list[str] | None = None) -> int:
     if reads_only and (problem := missing_manifest(config)) is not None:
         console.print(f"[red]Pre-flight failed:[/red] {problem}")
         return 1
+
+    # The token is the other precondition a first `sync` fails on. Checked
+    # here, before the run log is set up, so someone trying the tool out
+    # before configuring it is not left with a directory tree under a
+    # destination they never got to use.
+    if args.needs_token:
+        try:
+            TokenProvider(config.token, config.token_file)
+        except TokenError as exc:
+            console.print(f"[red]{exc}[/red]")
+            return 1
 
     try:
         log_path = setup_logging(
