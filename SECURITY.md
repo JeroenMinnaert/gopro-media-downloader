@@ -8,11 +8,10 @@ version before reporting.
 
 ## Reporting a vulnerability
 
-**Do not open a public issue for a security problem.** Use one of:
-
-- GitHub's [private vulnerability reporting](https://github.com/JeroenMinnaert/gopro-media-downloader/security/advisories/new)
-  (preferred — it keeps the discussion attached to the repo)
-- Email <2262843+JeroenMinnaert@users.noreply.github.com> with `gopro-media-downloader` in the subject
+**Do not open a public issue for a security problem.** Use GitHub's
+[private vulnerability reporting](https://github.com/JeroenMinnaert/gopro-media-downloader/security/advisories/new),
+which keeps the report private until a fix is out and the discussion attached
+to the repository.
 
 Expect an acknowledgement within about a week. There is no bounty; credit in
 the release notes if you'd like it.

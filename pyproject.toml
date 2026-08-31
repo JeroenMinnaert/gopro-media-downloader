@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [
-    { name = "Jeroen Minnaert", email = "2262843+JeroenMinnaert@users.noreply.github.com" },
+    { name = "Jeroen Minnaert" },
 ]
 keywords = ["gopro", "gopro-plus", "backup", "downloader", "cli"]
 classifiers = [
